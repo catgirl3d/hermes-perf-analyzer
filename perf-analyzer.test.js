@@ -4,15 +4,22 @@ const assert = require('node:assert/strict');
 const {
   buildComparisonRows,
   buildBackendGroups,
+  buildMetricPresentation,
+  classifyTailImpact,
   buildComparisonTextReport,
   buildBackendContextLabels,
+  describeSampleConfidence,
+  createMeasurementSetsExport,
   summarizePercentiles,
   extract,
   loadMeasurementSets,
+  mergeMeasurementSets,
   nextSetName,
   normalizeTrace,
+  parseMeasurementSetsImport,
   persistMeasurementSets,
   selectSetForComparison,
+  serializeSetTracesForInputs,
   shouldAppendTrailingTrace,
 } = require('./perf-analyzer.js');
 
@@ -216,6 +223,18 @@ test('groups available backend metrics by diagnostic meaning', () => {
     max: 50,
     traceKey: 'outsideHandlerRoundTripMs',
   });
+  assert.deepEqual(outsideHandler.presentation, {
+    p50: '40.0 ms',
+    p90: '48.0 ms',
+    p95: '49.0 ms',
+    max: '50.0 ms',
+    delta: '+8.0 ms',
+    relative: '+20.0%',
+    impact: {
+      key: 'moderate',
+      label: 'moderate',
+    },
+  });
 
   const buildCount = groups
     .find((group) => group.id === 'state')
@@ -284,6 +303,43 @@ test('marks metric coverage as partial when backend samples omit the field', () 
   });
 });
 
+test('formats sub-millisecond latency in microseconds with separate relative tail', () => {
+  const stats = {
+    med: 0.04,
+    p90: 0.057,
+    p95: 0.061,
+    min: 0.03,
+    max: 0.08,
+    n: 20,
+  };
+  const presentation = buildMetricPresentation({
+    stats,
+    summary: summarizePercentiles(stats.med, stats.p90, stats.n),
+    unit: 'ms',
+    distribution: 'latency',
+  });
+
+  assert.deepEqual(presentation, {
+    p50: '40 µs',
+    p90: '57 µs',
+    p95: '61 µs',
+    max: '80 µs',
+    delta: '+17 µs',
+    relative: '+42.5%',
+    impact: {
+      key: 'micro',
+      label: 'micro',
+    },
+  });
+});
+
+test('classifies timing impact by absolute tail rather than relative percentage', () => {
+  assert.deepEqual(
+    [0, 0.099, 0.1, 0.999, 1, 9.999, 10].map((value) => classifyTailImpact(value).key),
+    ['micro', 'micro', 'small', 'small', 'moderate', 'moderate', 'significant'],
+  );
+});
+
 test('adds a new field only when the edited last field has content', () => {
   assert.equal(shouldAppendTrailingTrace(['trace'], 0), true);
   assert.equal(shouldAppendTrailingTrace(['trace', ''], 0), false);
@@ -307,6 +363,41 @@ test('persists valid measurement sets and ignores broken storage data', () => {
   assert.deepEqual(loadMeasurementSets(null), []);
 });
 
+test('exports and imports a versioned measurement sets file', () => {
+  const sets = [{ id: 'a', name: 'Set A', createdAt: 1, traces: [trace(100, 50)] }];
+  const exported = createMeasurementSetsExport(sets, '2026-07-14T20:00:00.000Z');
+
+  assert.deepEqual(exported, {
+    format: 'hermes-perf-analyzer.measurement-sets',
+    version: 1,
+    exportedAt: '2026-07-14T20:00:00.000Z',
+    sets,
+  });
+  assert.deepEqual(parseMeasurementSetsImport(JSON.stringify(exported)), sets);
+  assert.deepEqual(parseMeasurementSetsImport(JSON.stringify(sets)), sets);
+  assert.throws(() => parseMeasurementSetsImport('{"format":"unknown"}'), /Unsupported/);
+});
+
+test('merges imported sets without duplicating existing ids', () => {
+  const setA = { id: 'a', name: 'Set A', traces: [trace(100, 50)] };
+  const setB = { id: 'b', name: 'Set B', traces: [trace(90, 40)] };
+
+  assert.deepEqual(mergeMeasurementSets([setA], [setA, setB]), {
+    sets: [setA, setB],
+    added: 1,
+    skipped: 1,
+  });
+});
+
+test('serializes a saved set back into parseable trace inputs', () => {
+  const set = { id: 'a', name: 'Set A', traces: [trace(100, 50), trace(120, 60)] };
+  const restored = serializeSetTracesForInputs(set).map((value) => normalizeTrace(JSON.parse(value)));
+
+  assert.equal(restored.length, 2);
+  assert.equal(extract(restored[0]).elapsedMs, 100);
+  assert.equal(extract(restored[1]).rpcDurationMs, 60);
+});
+
 test('summarizes p50 to p90 tail, stability, and confidence', () => {
   assert.deepEqual(summarizePercentiles(50, 100, 4), {
     p50Position: 50,
@@ -314,7 +405,7 @@ test('summarizes p50 to p90 tail, stability, and confidence', () => {
     delta: 50,
     percent: 100,
     stability: 'volatile',
-    confidence: 'low confidence',
+    confidence: 'few samples',
   });
   assert.deepEqual(summarizePercentiles(90, 99, 20), {
     p50Position: (90 / 99) * 100,
@@ -322,7 +413,7 @@ test('summarizes p50 to p90 tail, stability, and confidence', () => {
     delta: 9,
     percent: 10,
     stability: 'stable',
-    confidence: 'supported',
+    confidence: 'enough samples',
   });
   assert.deepEqual(summarizePercentiles(0, 0, 1), {
     p50Position: 0,
@@ -330,6 +421,17 @@ test('summarizes p50 to p90 tail, stability, and confidence', () => {
     delta: 0,
     percent: 0,
     stability: 'stable',
-    confidence: 'low confidence',
+    confidence: 'few samples',
+  });
+});
+
+test('describes sample confidence label and badge class', () => {
+  assert.deepEqual(describeSampleConfidence(4), {
+    label: 'few samples',
+    badgeClass: 'tail-badge-warn',
+  });
+  assert.deepEqual(describeSampleConfidence(10), {
+    label: 'enough samples',
+    badgeClass: 'tail-badge-ok',
   });
 });

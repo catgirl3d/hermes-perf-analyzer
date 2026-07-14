@@ -33,6 +33,16 @@
     <path d="M8 3v6h8V3" />
     <path d="M8 21v-7h8v7" />
   </symbol>
+  <symbol id="icon-download" viewBox="0 0 24 24">
+    <path d="M12 3v12" />
+    <path d="m7 10 5 5 5-5" />
+    <path d="M5 21h14" />
+  </symbol>
+  <symbol id="icon-upload" viewBox="0 0 24 24">
+    <path d="M12 16V4" />
+    <path d="m7 9 5-5 5 5" />
+    <path d="M5 21h14" />
+  </symbol>
   <symbol id="icon-timer" viewBox="0 0 24 24">
     <path d="M9 2h6" />
     <path d="M12 6V2" />
@@ -80,7 +90,7 @@
     <div class="btn-row">
       <button class="btn-primary" id="analyzeButton" type="button"><svg class="icon icon-button"><use href="#icon-bolt"></use></svg><span>Analyze</span></button>
       <button class="btn-add" id="addTraceButton" type="button"><svg class="icon icon-button"><use href="#icon-plus"></use></svg><span>Add trace</span></button>
-      <button class="btn-add" id="loadExampleButton" type="button"><svg class="icon icon-button"><use href="#icon-swap"></use></svg><span>Load comparison example</span></button>
+      <button class="btn-add" id="loadExampleButton" type="button"><svg class="icon icon-button"><use href="#icon-swap"></use></svg><span>Load example set</span></button>
       <button class="btn-clear" id="clearAllButton" type="button"><svg class="icon icon-button"><use href="#icon-close"></use></svg><span>Clear all</span></button>
       <span class="parse-info" id="parseInfo"></span>
     </div>
@@ -98,6 +108,12 @@
         <input class="set-name-input" id="setNameInput" type="text" maxlength="40" placeholder="Set A" />
         <button class="btn-add" id="saveSetButton" type="button" disabled><svg class="icon icon-button"><use href="#icon-save"></use></svg><span>Save current</span></button>
       </div>
+    </div>
+    <div class="sets-toolbar">
+      <button class="btn-clear" id="exportSetsButton" type="button" disabled><svg class="icon icon-button"><use href="#icon-download"></use></svg><span>Export sets</span></button>
+      <button class="btn-clear" id="importSetsButton" type="button"><svg class="icon icon-button"><use href="#icon-upload"></use></svg><span>Import sets</span></button>
+      <input id="importSetsInput" type="file" accept="application/json,.json" hidden />
+      <span class="sets-status" id="setsStatus" aria-live="polite"></span>
     </div>
     <p class="sets-empty" id="setsEmpty">No saved sets yet.</p>
     <div class="set-cards" id="setCards"></div>
@@ -206,6 +222,7 @@
 
 </div>
 
+<script src="./perf-analyzer-example-traces.js"></script>
 <script src="./perf-analyzer.js" defer></script>
 </body>
 </html>

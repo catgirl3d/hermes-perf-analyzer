@@ -34,7 +34,10 @@ Saved sets:
 - contain a snapshot of all valid traces from the latest analysis
 - persist in browser `localStorage` across page reloads
 - are not removed by `Clear all`
-- can be selected or deleted independently
+- can be selected, restored into the trace inputs, or deleted independently
+- can be exported together to a JSON file and imported on another browser or machine
+
+Import merges sets with the existing library and skips sets whose IDs are already present.
 
 Select two sets to compare them. The first selected set is `A`, the second is `B`. Selecting another set keeps the two most recently selected sets in the comparison.
 
@@ -61,4 +64,4 @@ When two sets are selected, the app also generates a separate **Shareable compar
 - shareable aggregate report with copy/save actions
 - separate LLM-ready A/B comparison report
 
-For backend cards, `p50` is the typical value and `p90` is the slow tail. `tail = p90 - p50`: a small green tail indicates stable timings, while a large red tail indicates high variability. Treat `p90` as low confidence when there are fewer than 10 samples.
+For backend cards, `p50` is the typical value and `p90` is the slow tail. `tail = p90 - p50`: a small green tail indicates stable timings, while a large red tail indicates high variability. The sample badge shows `few samples` when there are fewer than 10 backend samples and `enough samples` otherwise.

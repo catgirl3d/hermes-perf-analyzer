@@ -292,6 +292,8 @@ const COMPARISON_METRICS = [
 ];
 
 const MEASUREMENT_SETS_STORAGE_KEY = 'hermes-perf-analyzer.measurement-sets.v1';
+const MEASUREMENT_SETS_EXPORT_FORMAT = 'hermes-perf-analyzer.measurement-sets';
+const MEASUREMENT_SETS_EXPORT_VERSION = 1;
 
 const $ = (id) => document.getElementById(id);
 const fmt = (value, digits = 1) => (isNaN(value) || value == null ? '—' : Number(value).toFixed(digits));
@@ -491,16 +493,73 @@ function computeStats(rows, key, subKey) {
   };
 }
 
+function classifyTailImpact(deltaMs) {
+  const absoluteDelta = Math.abs(Number(deltaMs));
+  if (!Number.isFinite(absoluteDelta) || absoluteDelta < 0.1) {
+    return { key: 'micro', label: 'micro' };
+  }
+  if (absoluteDelta < 1) return { key: 'small', label: 'small' };
+  if (absoluteDelta < 10) return { key: 'moderate', label: 'moderate' };
+  return { key: 'significant', label: 'significant' };
+}
+
+function formatMetricMeasurement(value, unit, forcedUnit) {
+  if (!Number.isFinite(value)) return '—';
+  if (unit === 'ms') {
+    const displayUnit = forcedUnit || (Math.abs(value) < 1 ? 'µs' : 'ms');
+    if (displayUnit === 'µs') {
+      const microseconds = value * 1000;
+      const digits = Math.abs(microseconds) < 10 && microseconds !== 0 ? 1 : 0;
+      return `${fmt(microseconds, digits)} µs`;
+    }
+    const absoluteValue = Math.abs(value);
+    const digits = absoluteValue < 0.1 ? 3 : absoluteValue < 1 ? 2 : 1;
+    return `${fmt(value, digits)} ms`;
+  }
+  if (unit === 'count') return fmt(value);
+  if (unit === 'chars') return `${fmt(value)} chars`;
+  return `${fmt(value)} ${unit}`.trim();
+}
+
+function formatSignedMetricMeasurement(value, unit) {
+  if (!Number.isFinite(value)) return '—';
+  const sign = value >= 0 ? '+' : '−';
+  return `${sign}${formatMetricMeasurement(Math.abs(value), unit)}`;
+}
+
+function metricReadingMarkup(text) {
+  const separator = text.indexOf(' ');
+  if (separator === -1) return `<strong>${escapeHtml(text)}</strong>`;
+  return `<strong>${escapeHtml(text.slice(0, separator))}</strong><small>${escapeHtml(text.slice(separator + 1))}</small>`;
+}
+
+function buildMetricPresentation({ stats, summary, unit, distribution }) {
+  const primaryUnit = unit === 'ms' && Math.max(Math.abs(stats.med), Math.abs(stats.p90)) < 1
+    ? 'µs'
+    : unit;
+  return {
+    p50: formatMetricMeasurement(stats.med, unit, primaryUnit),
+    p90: formatMetricMeasurement(stats.p90, unit, primaryUnit),
+    p95: formatMetricMeasurement(stats.p95, unit, primaryUnit),
+    max: formatMetricMeasurement(stats.max, unit, primaryUnit),
+    delta: formatSignedMetricMeasurement(summary.delta, unit),
+    relative: formatSigned(summary.percent, '%'),
+    impact: distribution === 'latency' ? classifyTailImpact(summary.delta) : null,
+  };
+}
+
 function buildBackendGroups(rows) {
   const backendRows = rows.filter((row) => row?._hasBackend && row.backend);
   return BACKEND_GROUPS.map((group) => {
     const metrics = group.fields.map((field) => {
       const stats = computeStats(backendRows, null, field.key);
       if (!stats || stats.n === 0) return null;
+      const unit = field.unit || 'ms';
+      const summary = summarizePercentiles(stats.med, stats.p90, stats.n);
       return {
         ...field,
         kind: field.kind || 'timing',
-        unit: field.unit || 'ms',
+        unit,
         variationLabel: group.distribution === 'spread' ? 'spread' : 'tail',
         coverage: {
           sampled: stats.n,
@@ -512,8 +571,14 @@ function buildBackendGroups(rows) {
           max: stats.max,
           traceKey: field.traceKey || field.key,
         },
+        presentation: buildMetricPresentation({
+          stats,
+          summary,
+          unit,
+          distribution: group.distribution,
+        }),
         stats,
-        summary: summarizePercentiles(stats.med, stats.p90, stats.n),
+        summary,
       };
     }).filter(Boolean);
 
@@ -527,7 +592,14 @@ function buildBackendGroups(rows) {
   }).filter((group) => group.metrics.length > 0);
 }
 
+function describeSampleConfidence(sampleCount) {
+  return sampleCount < 10
+    ? { label: 'few samples', badgeClass: 'tail-badge-warn' }
+    : { label: 'enough samples', badgeClass: 'tail-badge-ok' };
+}
+
 function summarizePercentiles(p50, p90Value, sampleCount) {
+  const confidence = describeSampleConfidence(sampleCount);
   const scaleMax = Math.max(
     Number.isFinite(p50) ? p50 : 0,
     Number.isFinite(p90Value) ? p90Value : 0,
@@ -552,7 +624,7 @@ function summarizePercentiles(p50, p90Value, sampleCount) {
     delta,
     percent,
     stability,
-    confidence: sampleCount < 10 ? 'low confidence' : 'supported',
+    confidence: confidence.label,
   };
 }
 
@@ -765,6 +837,50 @@ function isValidStoredSet(value) {
   }
 }
 
+function createMeasurementSetsExport(sets, exportedAt = new Date().toISOString()) {
+  return {
+    format: MEASUREMENT_SETS_EXPORT_FORMAT,
+    version: MEASUREMENT_SETS_EXPORT_VERSION,
+    exportedAt,
+    sets: JSON.parse(JSON.stringify(sets)),
+  };
+}
+
+function parseMeasurementSetsImport(value) {
+  const payload = typeof value === 'string' ? JSON.parse(value) : value;
+  const sets = Array.isArray(payload)
+    ? payload
+    : payload?.format === MEASUREMENT_SETS_EXPORT_FORMAT
+      && payload?.version === MEASUREMENT_SETS_EXPORT_VERSION
+      && Array.isArray(payload?.sets)
+      ? payload.sets
+      : null;
+  if (!sets) throw new Error('Unsupported measurement sets file');
+  if (!sets.every(isValidStoredSet)) throw new Error('The file contains an invalid measurement set');
+  return JSON.parse(JSON.stringify(sets));
+}
+
+function mergeMeasurementSets(existingSets, importedSets) {
+  const ids = new Set(existingSets.map((set) => set.id));
+  const sets = [...existingSets];
+  let added = 0;
+  let skipped = 0;
+  importedSets.forEach((set) => {
+    if (ids.has(set.id)) {
+      skipped += 1;
+      return;
+    }
+    ids.add(set.id);
+    sets.push(set);
+    added += 1;
+  });
+  return { sets, added, skipped };
+}
+
+function serializeSetTracesForInputs(set) {
+  return set.traces.map((trace) => JSON.stringify(trace, null, 2));
+}
+
 function loadMeasurementSets(storage) {
   if (!storage) return [];
   try {
@@ -782,6 +898,65 @@ function persistMeasurementSets(storage, sets) {
     return true;
   } catch (_) {
     return false;
+  }
+}
+
+function loadTraceValuesIntoInputs(values) {
+  $('tracesWrapper').innerHTML = '';
+  traceCount = 0;
+  currentTraces = [];
+  setSaveAvailability(false);
+  resetResults();
+  values.forEach((value) => addTrace(value));
+  ensureTrailingEmptyTrace();
+}
+
+function focusAnalyzeButton(message) {
+  $('parseInfo').textContent = message;
+  const analyzeButton = $('analyzeButton');
+  analyzeButton.focus({ preventScroll: true });
+  analyzeButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function setSetsStatus(message, isError = false) {
+  const status = $('setsStatus');
+  status.textContent = message;
+  status.classList.toggle('error', isError);
+}
+
+function downloadJsonFile(value, filename) {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportMeasurementSets() {
+  if (!measurementSets.length) return;
+  const date = new Date().toISOString().slice(0, 10);
+  downloadJsonFile(createMeasurementSetsExport(measurementSets), `hermes-measurement-sets-${date}.json`);
+  setSetsStatus(`Exported ${measurementSets.length} set(s).`);
+}
+
+async function importMeasurementSets(event) {
+  const input = event.target;
+  const file = input.files?.[0];
+  if (!file) return;
+  try {
+    const importedSets = parseMeasurementSetsImport(await file.text());
+    const merged = mergeMeasurementSets(measurementSets, importedSets);
+    if (!persistMeasurementSets(measurementStorage, merged.sets)) {
+      throw new Error('Browser storage is unavailable or full');
+    }
+    measurementSets = merged.sets;
+    renderMeasurementSets();
+    setSetsStatus(`Imported ${merged.added} set(s)${merged.skipped ? `, skipped ${merged.skipped} existing` : ''}.`);
+  } catch (error) {
+    setSetsStatus(`Import failed: ${error.message}`, true);
+  } finally {
+    input.value = '';
   }
 }
 
@@ -846,6 +1021,7 @@ function renderComparison() {
 function renderMeasurementSets() {
   selectedSetIds = selectedSetIds.filter((id) => measurementSets.some((set) => set.id === id));
   $('setsEmpty').hidden = measurementSets.length > 0;
+  $('exportSetsButton').disabled = measurementSets.length === 0;
   $('setNameInput').placeholder = nextSetName(measurementSets.length);
   $('setCards').innerHTML = measurementSets.map((set) => {
     const rows = set.traces.map(normalizeTrace).map(extract);
@@ -862,9 +1038,14 @@ function renderMeasurementSets() {
           ${comparisonRole ? `<span class="set-role">${comparisonRole}</span>` : ''}
           <span>${escapeHtml(set.name)}</span>
         </label>
-        <button class="set-remove" type="button" data-action="remove-set" title="Delete set" aria-label="Delete ${escapeHtml(set.name)}">
-          ${iconMarkup('close', 'icon icon-button')}
-        </button>
+        <div class="set-card-actions">
+          <button class="set-restore" type="button" data-action="restore-set" title="Restore traces from ${escapeHtml(set.name)}">
+            ${iconMarkup('refresh', 'icon icon-button')}<span>Restore</span>
+          </button>
+          <button class="set-remove" type="button" data-action="remove-set" title="Delete set" aria-label="Delete ${escapeHtml(set.name)}">
+            ${iconMarkup('close', 'icon icon-button')}
+          </button>
+        </div>
       </div>
       <div class="set-meta">
         <span>${set.traces.length} sample${set.traces.length === 1 ? '' : 's'}${createdAt ? ` · ${createdAt}` : ''}</span>
@@ -899,6 +1080,14 @@ function saveCurrentSet() {
   $('parseInfo').textContent = `Saved ${name} with ${currentTraces.length} trace(s).`;
 }
 
+function restoreMeasurementSet(setId) {
+  const set = measurementSets.find((candidate) => candidate.id === setId);
+  if (!set) return;
+
+  loadTraceValuesIntoInputs(serializeSetTracesForInputs(set));
+  focusAnalyzeButton(`Restored ${set.name}: ${set.traces.length} trace(s). Click Analyze to inspect it.`);
+}
+
 function handleSetCardsChange(event) {
   if (!event.target.matches('[data-action="select-set"]')) return;
   const setId = event.target.closest('[data-set-id]')?.dataset.setId;
@@ -910,6 +1099,12 @@ function handleSetCardsChange(event) {
 }
 
 function handleSetCardsClick(event) {
+  const restoreButton = event.target.closest('[data-action="restore-set"]');
+  if (restoreButton) {
+    const setId = restoreButton.closest('[data-set-id]')?.dataset.setId;
+    if (setId) restoreMeasurementSet(setId);
+    return;
+  }
   const removeButton = event.target.closest('[data-action="remove-set"]');
   if (!removeButton) return;
   const setId = removeButton.closest('[data-set-id]')?.dataset.setId;
@@ -919,6 +1114,7 @@ function handleSetCardsClick(event) {
   measurementSets = nextSets;
   selectedSetIds = selectedSetIds.filter((id) => id !== setId);
   renderMeasurementSets();
+  setSetsStatus('Set deleted.');
 }
 
 function renderResults(rows) {
@@ -1015,56 +1211,61 @@ function renderResults(rows) {
         </div>
         <div class="backend-grid">
           ${group.metrics.map((metric) => {
-            const unit = metric.unit === 'count' ? '' : metric.unit === 'chars' ? ' chars' : ' ms';
-            const unitLabel = unit.trim();
             const rangeStart = Math.min(metric.summary.p50Position, metric.summary.p90Position);
             const rangeWidth = Math.abs(metric.summary.p90Position - metric.summary.p50Position);
-            const variationClass = group.distribution === 'latency'
-              ? `tail-${metric.summary.stability}`
-              : 'tail-spread';
+            const impact = metric.presentation.impact;
+            const variationClass = impact ? `tail-impact-${impact.key}` : 'tail-spread';
+            const impactBadge = impact
+              ? `<span class="tail-impact-label">${impact.label}</span>`
+              : '';
+            const impactCardClass = impact ? ` backend-card-impact-${impact.key}` : '';
             const kindBadge = metric.kind === 'timing'
               ? ''
               : `<span class="bc-kind bc-kind-${metric.kind}">${metric.kind}</span>`;
             const traceField = escapeHtml(metric.details.traceKey);
+            const coverageBadge = `<span class="tail-badge tail-badge-neutral">coverage ${metric.coverage.sampled}/${metric.coverage.total}</span>`;
             const coverageFlag = metric.coverage.status === 'partial'
-              ? '<span class="coverage-partial">partial</span>'
+              ? '<span class="tail-badge tail-badge-warn">partial</span>'
               : '';
-            const detailTitle = `${traceField}: p95 ${fmt(metric.details.p95)}${unit}; max ${fmt(metric.details.max)}${unit}; coverage ${metric.coverage.sampled}/${metric.coverage.total} (${metric.coverage.status})`;
-            return `<article class="backend-card backend-card-${metric.kind}" title="${detailTitle}">
+            const confidenceBadgeClass = describeSampleConfidence(metric.coverage.sampled).badgeClass;
+            const detailTitle = escapeHtml(`${metric.details.traceKey}: p95 ${metric.presentation.p95}; max ${metric.presentation.max}; relative tail ${metric.presentation.relative}; coverage ${metric.coverage.sampled}/${metric.coverage.total} (${metric.coverage.status})`);
+            const rangeImpactClass = impact ? ` percentile-range-impact-${impact.key}` : '';
+            return `<article class="backend-card backend-card-${metric.kind}${impactCardClass}" title="${detailTitle}">
               <div class="bc-heading">
                 <div class="bc-label">${escapeHtml(metric.label)}</div>
                 ${kindBadge}
               </div>
+              <div class="bc-sub">${escapeHtml(metric.desc)}</div>
               <div class="bc-vals">
                 <div class="percentile-stat p50">
                   <span class="percentile-stat-label">p50</span>
-                  <span class="percentile-stat-reading"><strong>${fmt(metric.stats.med)}</strong>${unitLabel ? `<small>${unitLabel}</small>` : ''}</span>
+                  <span class="percentile-stat-reading">${metricReadingMarkup(metric.presentation.p50)}</span>
                 </div>
                 <div class="percentile-stat p90">
                   <span class="percentile-stat-label">p90</span>
-                  <span class="percentile-stat-reading"><strong>${fmt(metric.stats.p90)}</strong>${unitLabel ? `<small>${unitLabel}</small>` : ''}</span>
+                  <span class="percentile-stat-reading">${metricReadingMarkup(metric.presentation.p90)}</span>
                 </div>
               </div>
-              <div class="bc-sub">${escapeHtml(metric.desc)}</div>
               <div class="bc-tail">
-                <span class="tail-value ${variationClass}">${metric.variationLabel} ${formatSigned(metric.summary.delta, unit)} · ${formatSigned(metric.summary.percent, '%')}</span>
+                <span class="tail-value ${variationClass}">${metric.variationLabel} ${escapeHtml(metric.presentation.delta)}${impactBadge}</span>
                 <span class="tail-confidence">
-                  <span>coverage ${metric.coverage.sampled}/${metric.coverage.total}</span>
+                  ${coverageBadge}
                   ${coverageFlag}
-                  <span>${metric.summary.confidence}</span>
+                  <span class="tail-badge ${confidenceBadgeClass}">${metric.summary.confidence}</span>
                 </span>
               </div>
-              <div class="percentile-track" title="${traceField}: p50 ${fmt(metric.stats.med)}${unit}; p90 ${fmt(metric.stats.p90)}${unit}">
-                <div class="percentile-range percentile-range-${group.distribution}" style="left:${rangeStart.toFixed(1)}%;width:${rangeWidth.toFixed(1)}%"></div>
+              <div class="percentile-track" title="${traceField}: p50 ${escapeHtml(metric.presentation.p50)}; p90 ${escapeHtml(metric.presentation.p90)}">
+                <div class="percentile-range percentile-range-${group.distribution}${rangeImpactClass}" style="left:${rangeStart.toFixed(1)}%;width:${rangeWidth.toFixed(1)}%"></div>
                 <span class="percentile-marker p50" style="left:${metric.summary.p50Position.toFixed(1)}%"></span>
                 <span class="percentile-marker p90" style="left:${metric.summary.p90Position.toFixed(1)}%"></span>
               </div>
               <details class="bc-details">
-                <summary>p95 · max · field</summary>
+                <summary>p95 · max · relative · field</summary>
                 <div class="bc-details-content">
                   <div class="bc-details-stats">
-                    <span><small>p95</small>${fmt(metric.details.p95)}${unit}</span>
-                    <span><small>max</small>${fmt(metric.details.max)}${unit}</span>
+                    <span><small>p95</small>${escapeHtml(metric.presentation.p95)}</span>
+                    <span><small>max</small>${escapeHtml(metric.presentation.max)}</span>
+                    <span><small>relative</small>${escapeHtml(metric.presentation.relative)}</span>
                   </div>
                   <code>${traceField}</code>
                 </div>
@@ -1214,14 +1415,15 @@ function clearAll() {
 }
 
 function loadComparisonExample() {
-  clearAll();
-  const textareas = document.querySelectorAll('#tracesWrapper textarea');
-  if (textareas[0]) {
-    textareas[0].value = JSON.stringify(EXAMPLE_TRACE, null, 2);
+  const traces = Array.isArray(globalThis.HERMES_PERF_EXAMPLE_TRACES)
+    ? globalThis.HERMES_PERF_EXAMPLE_TRACES
+    : [];
+  if (!traces.length) {
+    $('parseInfo').textContent = 'Example set is unavailable.';
+    return;
   }
-  ensureTrailingEmptyTrace();
-  [...document.querySelectorAll('#tracesWrapper textarea')].at(-1)?.focus();
-  $('parseInfo').textContent = 'Loaded 1 example trace. Paste another trace to compare or analyze this sample as-is.';
+  loadTraceValuesIntoInputs(traces.map((trace) => JSON.stringify(trace, null, 2)));
+  focusAnalyzeButton(`Loaded ${traces.length} example traces. Click Analyze to inspect the sample set.`);
 }
 
 function init() {
@@ -1237,6 +1439,9 @@ function init() {
   $('loadExampleButton').addEventListener('click', loadComparisonExample);
   $('clearAllButton').addEventListener('click', clearAll);
   $('saveSetButton').addEventListener('click', saveCurrentSet);
+  $('exportSetsButton').addEventListener('click', exportMeasurementSets);
+  $('importSetsButton').addEventListener('click', () => $('importSetsInput').click());
+  $('importSetsInput').addEventListener('change', importMeasurementSets);
   $('setNameInput').addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !$('saveSetButton').disabled) saveCurrentSet();
   });
@@ -1262,16 +1467,23 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     buildComparisonRows,
     buildBackendGroups,
+    buildMetricPresentation,
+    classifyTailImpact,
     buildComparisonTextReport,
     buildBackendContextLabels,
+    describeSampleConfidence,
+    createMeasurementSetsExport,
     summarizePercentiles,
     computeStats,
     extract,
     loadMeasurementSets,
+    mergeMeasurementSets,
     nextSetName,
     normalizeTrace,
+    parseMeasurementSetsImport,
     persistMeasurementSets,
     selectSetForComparison,
+    serializeSetTracesForInputs,
     shouldAppendTrailingTrace,
   };
 }
