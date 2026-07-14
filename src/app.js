@@ -394,7 +394,7 @@
                   </div>
                 </div>
                 <div class="bc-tail">
-                  <span class="tail-value ${variationClass}">${metric.variationLabel} ${escapeHtml(metric.presentation.delta)}${impactBadge}</span>
+                  <span class="tail-value ${variationClass}"><span class="tail-value-main">${metric.variationLabel} ${escapeHtml(metric.presentation.delta)}</span>${impactBadge}</span>
                   <span class="tail-confidence">
                     ${coverageBadge}
                     ${coverageFlag}

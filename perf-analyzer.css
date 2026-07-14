@@ -380,13 +380,21 @@ td { padding: 10px 16px; }
   display: flex; align-items: center; justify-content: space-between;
   gap: 8px; margin-top: 9px; font-size: 10px;
 }
-.tail-value { font-family: var(--mono); font-weight: 600; }
+.tail-value {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  font-family: var(--mono);
+  font-weight: 600;
+}
+.tail-value-main { white-space: nowrap; }
 .tail-impact-micro { color: var(--muted); }
 .tail-impact-small { color: var(--ok); }
 .tail-impact-moderate { color: var(--medium); }
 .tail-impact-significant { color: var(--warn); }
 .tail-impact-label {
-  display: inline-block; margin-left: 0; padding: 1px 4px; margin-top: 3px;
+  display: inline-block; margin-left: 0; padding: 1px 4px; margin-top: 0;
   border: 1px solid currentColor; border-radius: 4px;
   font: 10px var(--mono); text-transform: uppercase; letter-spacing: .05em;
   opacity: .82;
