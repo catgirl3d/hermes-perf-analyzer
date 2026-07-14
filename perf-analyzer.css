@@ -101,6 +101,7 @@ button:disabled { cursor: not-allowed; opacity: .45; transform: none; }
 .btn-primary { background: var(--accent); color: #f8fbff; }
 .btn-add     { background: var(--card); color: var(--text); border: 1px solid var(--border); }
 .btn-clear   { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+.btn-danger  { background: var(--warn); color: #fff; }
 .btn-remove  {
   background: transparent; color: var(--muted);
   border: 1px solid var(--border); border-radius: 7px;
@@ -228,6 +229,26 @@ button:hover { opacity: .88; }
 .set-remove:hover {
   background: rgba(var(--warn-rgb), .08); color: var(--warn);
 }
+.modal-backdrop {
+  position: fixed; z-index: 10; inset: 0; display: grid; place-items: center;
+  padding: 20px; background: rgba(4, 8, 14, .72); backdrop-filter: blur(5px);
+}
+.confirm-modal {
+  width: min(100%, 400px); padding: 22px;
+  border: 1px solid rgba(var(--warn-rgb), .42); border-radius: 14px;
+  background: linear-gradient(145deg, rgba(var(--warn-rgb), .1), transparent 48%), var(--surface);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .45);
+}
+.confirm-modal-kicker {
+  color: var(--warn); font: 600 10px var(--mono);
+  text-transform: uppercase; letter-spacing: .09em;
+}
+.confirm-modal h2 { margin-top: 8px; color: var(--text); font-size: 17px; }
+.confirm-modal p { margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.confirm-modal-actions {
+  display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px;
+}
+.confirm-modal-actions button { padding: 8px 12px; font-size: 12px; }
 .comparison-head { align-items: center; margin-bottom: 16px; }
 .comparison-head h2 { font-size: 15px; font-weight: 600; }
 .comparison-hint { color: var(--muted); font-size: 11px; }

@@ -23,6 +23,7 @@ const {
   serializeSetTracesForInputs,
   shouldAppendTrailingTrace,
 } = require('../src/index.js');
+const { getMeasurementSetRemovalCopy } = require('../src/app.js');
 
 function trace(elapsedMs, rpcDurationMs) {
   return {
@@ -54,6 +55,10 @@ test('keeps only the two most recently selected sets', () => {
   assert.deepEqual(selectSetForComparison(['a'], 'b'), ['a', 'b']);
   assert.deepEqual(selectSetForComparison(['a', 'b'], 'c'), ['b', 'c']);
   assert.deepEqual(selectSetForComparison(['a', 'b'], 'a'), ['b', 'a']);
+});
+
+test('labels custom removal confirmation with the selected set name', () => {
+  assert.equal(getMeasurementSetRemovalCopy({ name: 'Set A' }), 'Delete "Set A"?');
 });
 
 test('comparison uses p50 and calculates B relative to A', () => {

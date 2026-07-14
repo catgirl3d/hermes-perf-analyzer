@@ -50,6 +50,7 @@
   let measurementSets = [];
   let selectedSetIds = [];
   let measurementStorage = null;
+  let pendingSetRemoval = null;
 
   const SAMPLE_METRICS = [
     { key: 'elapsedMs', label: 'Elapsed', read: (row) => row.elapsedMs, primary: true },
@@ -283,6 +284,48 @@
     focusAnalyzeButton(`Restored ${set.name}: ${set.traces.length} trace(s). Click Analyze to inspect it.`);
   }
 
+  function getMeasurementSetRemovalCopy(set) {
+    return `Delete "${set.name}"?`;
+  }
+
+  function openMeasurementSetRemovalDialog(set, trigger) {
+    pendingSetRemoval = { setId: set.id, trigger };
+    $('removeSetDialogTitle').textContent = getMeasurementSetRemovalCopy(set);
+    $('removeSetDialog').hidden = false;
+    $('cancelRemoveSetButton').focus();
+  }
+
+  function closeMeasurementSetRemovalDialog({ restoreFocus = true } = {}) {
+    const trigger = pendingSetRemoval?.trigger;
+    pendingSetRemoval = null;
+    $('removeSetDialog').hidden = true;
+    if (restoreFocus && trigger?.isConnected) trigger.focus();
+  }
+
+  function confirmMeasurementSetRemoval() {
+    const setId = pendingSetRemoval?.setId;
+    if (!setId) return;
+
+    closeMeasurementSetRemovalDialog({ restoreFocus: false });
+    const nextSets = measurementSets.filter((set) => set.id !== setId);
+    if (!persistMeasurementSets(measurementStorage, nextSets)) return;
+    measurementSets = nextSets;
+    selectedSetIds = selectedSetIds.filter((id) => id !== setId);
+    renderMeasurementSets();
+    setSetsStatus('Set deleted.');
+  }
+
+  function handleRemoveSetDialogClick(event) {
+    if (event.target === $('removeSetDialog')) closeMeasurementSetRemovalDialog();
+  }
+
+  function handleRemoveSetDialogKeydown(event) {
+    if (event.key === 'Escape' && pendingSetRemoval) {
+      event.preventDefault();
+      closeMeasurementSetRemovalDialog();
+    }
+  }
+
   function handleSetCardsClick(event) {
     const restoreButton = event.target.closest('[data-action="restore-set"]');
     if (restoreButton) {
@@ -295,12 +338,9 @@
     if (removeButton) {
       const setId = removeButton.closest('[data-set-id]')?.dataset.setId;
       if (!setId) return;
-      const nextSets = measurementSets.filter((set) => set.id !== setId);
-      if (!persistMeasurementSets(measurementStorage, nextSets)) return;
-      measurementSets = nextSets;
-      selectedSetIds = selectedSetIds.filter((id) => id !== setId);
-      renderMeasurementSets();
-      setSetsStatus('Set deleted.');
+      const set = measurementSets.find((candidate) => candidate.id === setId);
+      if (!set) return;
+      openMeasurementSetRemovalDialog(set, removeButton);
       return;
     }
 
@@ -662,6 +702,10 @@
       if (event.key === 'Enter' && !$('saveSetButton').disabled) saveCurrentSet();
     });
     $('setCards').addEventListener('click', handleSetCardsClick);
+    $('cancelRemoveSetButton').addEventListener('click', () => closeMeasurementSetRemovalDialog());
+    $('confirmRemoveSetButton').addEventListener('click', confirmMeasurementSetRemoval);
+    $('removeSetDialog').addEventListener('click', handleRemoveSetDialogClick);
+    document.addEventListener('keydown', handleRemoveSetDialogKeydown);
     $('tracesWrapper').addEventListener('input', handleTraceInput);
     $('copyReportButton').addEventListener('click', copyTextReport);
     $('copyComparisonButton').addEventListener('click', copyComparisonReport);
@@ -670,7 +714,7 @@
     renderMeasurementSets();
   }
 
-  const appModule = { init };
+  const appModule = { getMeasurementSetRemovalCopy, init };
   Object.assign(HermesPerfAnalyzer, appModule);
 
   if (typeof document !== 'undefined') {
