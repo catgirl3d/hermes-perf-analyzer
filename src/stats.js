@@ -46,6 +46,32 @@
     };
   }
 
+  function classifyRelativeValue(value, values) {
+    const samples = values.filter((sample) => Number.isFinite(sample));
+    const baseline = median(samples);
+    const sampleCount = samples.length;
+    const percent = Number.isFinite(value) && Number.isFinite(baseline) && baseline !== 0
+      ? ((value - baseline) / baseline) * 100
+      : NaN;
+    const result = (key) => ({ key, baseline, percent, sampleCount });
+
+    if (!Number.isFinite(value) || sampleCount < 3 || !Number.isFinite(baseline) || baseline <= 0) {
+      return result('typical');
+    }
+
+    const delta = value - baseline;
+    const ratio = value / baseline;
+    const meaningfulDelta = Math.abs(delta) >= Math.max(1, baseline * 0.1);
+    const q1 = percentile(samples, 25);
+    const q3 = percentile(samples, 75);
+    const severeBoundary = q3 + Math.max((q3 - q1) * 0.5, 1);
+
+    if (meaningfulDelta && ratio >= 2.5 && value > severeBoundary) return result('outlier');
+    if (meaningfulDelta && ratio >= 1.5) return result('slow');
+    if (meaningfulDelta && ratio <= (2 / 3)) return result('fast');
+    return result('typical');
+  }
+
   function classifyTailImpact(deltaMs) {
     const absoluteDelta = Math.abs(Number(deltaMs));
     if (!Number.isFinite(absoluteDelta) || absoluteDelta < 0.1) {
@@ -140,6 +166,7 @@
   const statsModule = {
     buildMetricPresentation,
     classifyTailImpact,
+    classifyRelativeValue,
     computeStats,
     describeSampleConfidence,
     fmt,

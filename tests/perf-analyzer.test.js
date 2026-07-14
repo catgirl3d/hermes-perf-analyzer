@@ -5,6 +5,7 @@ const {
   buildComparisonRows,
   buildBackendGroups,
   buildMetricPresentation,
+  classifyRelativeValue,
   classifyTailImpact,
   buildComparisonTextReport,
   buildBackendContextLabels,
@@ -338,6 +339,33 @@ test('classifies timing impact by absolute tail rather than relative percentage'
     [0, 0.099, 0.1, 0.999, 1, 9.999, 10].map((value) => classifyTailImpact(value).key),
     ['micro', 'micro', 'small', 'small', 'moderate', 'moderate', 'significant'],
   );
+});
+
+test('classifies substantial per-metric differences relative to the median', () => {
+  const values = [100, 105, 110, 115, 180, 300];
+
+  assert.deepEqual(classifyRelativeValue(100, values), {
+    key: 'typical',
+    baseline: 112.5,
+    percent: -11.11111111111111,
+    sampleCount: 6,
+  });
+  assert.equal(classifyRelativeValue(180, values).key, 'slow');
+  assert.equal(classifyRelativeValue(300, values).key, 'outlier');
+  assert.equal(classifyRelativeValue(60, [...values, 60]).key, 'fast');
+});
+
+test('keeps relative comparison neutral with too few or non-finite samples', () => {
+  assert.equal(classifyRelativeValue(300, [100, 300]).key, 'typical');
+  assert.equal(classifyRelativeValue(NaN, [100, 110, 120]).key, 'typical');
+  assert.equal(classifyRelativeValue(0, [0, 0, 10]).key, 'typical');
+});
+
+test('separates an elevated sample from a strong elapsed-time outlier', () => {
+  const elapsedValues = [298.1, 585.2, 422.4, 291.5, 296.6, 525.3, 342.6, 970, 553.6, 1993.8];
+
+  assert.equal(classifyRelativeValue(970, elapsedValues).key, 'slow');
+  assert.equal(classifyRelativeValue(1993.8, elapsedValues).key, 'outlier');
 });
 
 test('adds a new field only when the edited last field has content', () => {

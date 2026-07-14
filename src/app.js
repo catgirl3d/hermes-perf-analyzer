@@ -17,6 +17,7 @@
     buildComparisonRows,
     buildComparisonTextReport,
     buildTextReport,
+    classifyRelativeValue,
     colorClass,
     computeStats,
     copyToClipboard,
@@ -49,6 +50,42 @@
   let measurementSets = [];
   let selectedSetIds = [];
   let measurementStorage = null;
+
+  const SAMPLE_METRICS = [
+    { key: 'elapsedMs', label: 'Elapsed', read: (row) => row.elapsedMs, primary: true },
+    { key: 'rpcDuration', label: 'RPC', read: (row) => row.rpcDuration },
+    { key: 'preRepoBuiltAt', label: 'Pre-RPC repo', read: (row) => row.preRepoBuiltAt, visible: (row) => row._format === 'new' },
+    { key: 'coldViewAt', label: 'View ready', read: (row) => row.coldViewAt },
+    { key: 'paintWaitDur', label: 'Paint wait', read: (row) => row.paintWaitDur },
+    { key: 'raf2WaitMs', label: 'raf-2 wait', read: (row) => row.raf2WaitMs },
+    { key: 'backendHandlerMs', label: 'BE handler', read: (row) => row.backend.handlerMs, visible: (row) => row._hasBackend },
+    { key: 'outsideHandlerMs', label: 'outside RTT', read: (row) => row.backend.outsideHandlerMs, visible: (row) => row._hasBackend },
+  ];
+
+  const SAMPLE_STATUS_PRIORITY = {
+    typical: 0,
+    fast: 0,
+    slow: 1,
+    outlier: 2,
+  };
+
+  function relativeMetricTitle(metric, comparison) {
+    if (comparison.sampleCount < 3 || !Number.isFinite(comparison.baseline)) {
+      return `${metric.label}: not enough comparable samples`;
+    }
+    const delta = Number.isFinite(comparison.percent) ? ` (${formatSigned(comparison.percent, '%')} vs median)` : '';
+    return `${metric.label}: median ${fmt(comparison.baseline)} ms${delta}`;
+  }
+
+  function renderRelativeMetric(metric, row, distributions) {
+    const value = metric.read(row);
+    const comparison = classifyRelativeValue(value, distributions[metric.key]);
+    const title = escapeHtml(relativeMetricTitle(metric, comparison));
+    return {
+      comparison,
+      markup: `<span class="sc-metric-value sc-relative-${comparison.key}" title="${title}">${fmt(value)} ms</span>`,
+    };
+  }
 
   function copyTextReport() {
     return copyToClipboard(lastTextReport, $('copyReportButton'), 'Copied', 'Copy report');
@@ -430,10 +467,29 @@
     lastTextReport = buildTextReport(rows);
     $('textReportOutput').textContent = lastTextReport;
 
-    const maxElapsed = Math.max(...rows.map((row) => row.elapsedMs).filter((value) => !isNaN(value)), 1);
+    const sampleDistributions = Object.fromEntries(SAMPLE_METRICS.map((metric) => [
+      metric.key,
+      rows
+        .filter((row) => !metric.visible || metric.visible(row))
+        .map(metric.read)
+        .filter((value) => Number.isFinite(value)),
+    ]));
     $('sampleCards').innerHTML = rows.map((row, index) => {
       const formatLabel = row._format === 'new' ? 'new' : 'old';
-      return `<div class="sample-card">
+      const visibleMetrics = SAMPLE_METRICS.filter((metric) => !metric.visible || metric.visible(row));
+      const renderedMetrics = visibleMetrics.map((metric) => ({
+        metric,
+        ...renderRelativeMetric(metric, row, sampleDistributions),
+      }));
+      const cardStatus = renderedMetrics.reduce(
+        (worst, current) => SAMPLE_STATUS_PRIORITY[current.comparison.key] > SAMPLE_STATUS_PRIORITY[worst]
+          ? current.comparison.key
+          : worst,
+        'typical',
+      );
+      const elapsedMetric = renderedMetrics.find(({ metric }) => metric.primary);
+      const detailMetrics = renderedMetrics.filter(({ metric }) => !metric.primary);
+      return `<div class="sample-card sc-card-${cardStatus}">
         <div class="sc-head">
           <span>Sample ${index + 1}</span>
           <div style="display:flex;gap:6px;align-items:center">
@@ -441,14 +497,9 @@
             <span class="sc-format ${formatLabel}">${formatLabel}</span>
           </div>
         </div>
-        <div class="sc-elapsed ${colorClass(row.elapsedMs, maxElapsed)}">${fmt(row.elapsedMs)} ms</div>
+        <div class="sc-elapsed sc-relative-${elapsedMetric.comparison.key}" title="${escapeHtml(relativeMetricTitle(elapsedMetric.metric, elapsedMetric.comparison))}">${fmt(row.elapsedMs)} ms</div>
         <div class="sc-detail">
-          RPC: <span>${fmt(row.rpcDuration)} ms</span><br>
-          ${row._format === 'new' ? `Pre-RPC repo: <span>${fmt(row.preRepoBuiltAt)} ms</span><br>` : ''}
-          View ready: <span>${fmt(row.coldViewAt)} ms</span><br>
-          Paint wait: <span>${fmt(row.paintWaitDur)} ms</span><br>
-          raf-2 wait: <span>${fmt(row.raf2WaitMs)} ms</span><br>
-          ${row._hasBackend ? `BE handler: <span>${fmt(row.backend.handlerMs)} ms</span><br>outside RTT: <span>${fmt(row.backend.outsideHandlerMs)} ms</span>` : ''}
+          ${detailMetrics.map(({ metric, markup }) => `<div class="sc-metric-row"><span>${metric.label}</span>${markup}</div>`).join('')}
         </div>
       </div>`;
     }).join('');

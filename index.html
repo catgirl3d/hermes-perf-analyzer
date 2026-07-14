@@ -215,7 +215,17 @@
 
     <!-- per-sample cards -->
     <div class="samples-section">
-      <h3>Per-sample overview</h3>
+      <div class="samples-head">
+        <div>
+          <h3>Per-sample overview</h3>
+          <p>Each timing is compared with the median of the same metric. Highlighting starts at 3 samples.</p>
+        </div>
+        <div class="sample-legend" aria-label="Relative timing legend">
+          <span><i class="legend-dot fast"></i>faster</span>
+          <span><i class="legend-dot slow"></i>slower</span>
+          <span><i class="legend-dot outlier"></i>outlier</span>
+        </div>
+      </div>
       <div class="sample-cards" id="sampleCards"></div>
     </div>
   </section>
