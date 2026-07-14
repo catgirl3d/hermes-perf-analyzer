@@ -479,7 +479,7 @@ function buildComparisonRows(rowsA, rowsB) {
     const hasPair = Number.isFinite(valueA) && Number.isFinite(valueB);
     const delta = hasPair ? valueB - valueA : NaN;
     const percent = hasPair && valueA !== 0 ? (delta / valueA) * 100 : NaN;
-    return { ...metric, valueA, valueB, delta, percent };
+    return { ...metric, statsA, statsB, valueA, valueB, delta, percent };
   }).filter((row) => Number.isFinite(row.valueA) || Number.isFinite(row.valueB));
 }
 
@@ -487,15 +487,23 @@ function formatBackendContext(backend) {
   const parts = [
     Number.isFinite(backend.timingVersion) ? `timing v${fmt(backend.timingVersion, 0)}` : 'legacy timing',
   ];
-  if (backend.resumePrewarmEnabled === true || backend.resumePrewarmEnabled === 1) {
-    parts.push('prewarm enabled');
+  if (typeof backend.resumePrewarmMode === 'string' && backend.resumePrewarmMode.trim()) {
+    parts.push(`prewarm ${backend.resumePrewarmMode.trim().replaceAll('_', '-')}`);
+  } else if (backend.resumePrewarmEnabled === true || backend.resumePrewarmEnabled === 1) {
+    parts.push('prewarm immediate');
   } else if (backend.resumePrewarmEnabled === false || backend.resumePrewarmEnabled === 0) {
     parts.push('prewarm disabled');
   }
-  if (typeof backend.resumePrewarmMode === 'string' && backend.resumePrewarmMode.trim()) {
-    parts.push(`mode ${backend.resumePrewarmMode.trim()}`);
-  }
   return parts.join(' · ');
+}
+
+function formatPrewarmMode(backend) {
+  if (typeof backend.resumePrewarmMode === 'string' && backend.resumePrewarmMode.trim()) {
+    return backend.resumePrewarmMode.trim().replaceAll('_', '-');
+  }
+  if (backend.resumePrewarmEnabled === true || backend.resumePrewarmEnabled === 1) return 'immediate';
+  if (backend.resumePrewarmEnabled === false || backend.resumePrewarmEnabled === 0) return 'disabled';
+  return 'unknown';
 }
 
 function buildBackendContextLabels(rows) {
@@ -513,18 +521,27 @@ function buildComparisonTextReport(setA, setB, comparisonRows, rowsA, rowsB) {
     `B: ${oneLine(setB.name)} | samples: ${setB.traces.length}`,
     `B backend: ${contextB}`,
     'delta: B - A | negative means B is faster',
-    '',
-    'P50 METRICS',
   ];
 
-  comparisonRows.forEach((row) => {
-    lines.push([
-      row.label.padEnd(28),
-      `A ${fmt(row.valueA).padStart(8)} ms`,
-      `B ${fmt(row.valueB).padStart(8)} ms`,
-      `delta ${formatSigned(row.delta, ' ms').padStart(11)}`,
-      `change ${formatSigned(row.percent, '%').padStart(8)}`,
-    ].join(' | '));
+  [
+    ['P50 METRICS', 'med'],
+    ['P90 METRICS', 'p90'],
+    ['P95 METRICS', 'p95'],
+  ].forEach(([heading, statKey]) => {
+    lines.push('', heading);
+    comparisonRows.forEach((row) => {
+      const valueA = row.statsA?.[statKey] ?? NaN;
+      const valueB = row.statsB?.[statKey] ?? NaN;
+      const delta = Number.isFinite(valueA) && Number.isFinite(valueB) ? valueB - valueA : NaN;
+      const percent = Number.isFinite(delta) && valueA !== 0 ? (delta / valueA) * 100 : NaN;
+      lines.push([
+        row.label.padEnd(28),
+        `A ${fmt(valueA).padStart(8)} ms`,
+        `B ${fmt(valueB).padStart(8)} ms`,
+        `delta ${formatSigned(delta, ' ms').padStart(11)}`,
+        `change ${formatSigned(percent, '%').padStart(8)}`,
+      ].join(' | '));
+    });
   });
 
   return lines.join('\n');
@@ -597,7 +614,7 @@ function buildTextReport(rows) {
       `messages=${row.messageCount ?? '?'}`,
       `builds=${fmt(backend.agentBuildActiveCount, 0)}`,
       `timing=v${Number.isFinite(backend.timingVersion) ? fmt(backend.timingVersion, 0) : '?'}`,
-      `prewarm=${backend.resumePrewarmEnabled === 1 || backend.resumePrewarmEnabled === true ? 'on' : backend.resumePrewarmEnabled === 0 || backend.resumePrewarmEnabled === false ? 'off' : '?'}:${backend.resumePrewarmMode || '?'}`,
+      `prewarm=${formatPrewarmMode(backend)}`,
     ].join(' | '));
   });
 

@@ -71,6 +71,8 @@ test('builds an LLM-ready comparison report with deltas', () => {
   assert.match(report, /Total elapsed/);
   assert.match(report, /delta\s+-20\.0 ms/);
   assert.match(report, /change\s+-18\.2%/);
+  assert.match(report, /P90 METRICS/);
+  assert.match(report, /P95 METRICS/);
 });
 
 test('normalizes a raw stages array before extraction', () => {
@@ -114,8 +116,24 @@ test('extracts timing v9 and prewarm metadata from a raw stages array', () => {
   assert.equal(row.backend.resumePrewarmEnabled, 0);
   assert.equal(row.backend.resumePrewarmMode, 'post_paint');
   assert.deepEqual(buildBackendContextLabels([row]), [
-    'timing v9 · prewarm disabled · mode post_paint',
+    'timing v9 · prewarm post-paint',
   ]);
+});
+
+test('labels timing v11 as on-demand agent construction', () => {
+  assert.deepEqual(
+    buildBackendContextLabels([
+      {
+        _hasBackend: true,
+        backend: {
+          timingVersion: 11,
+          resumePrewarmEnabled: 0,
+          resumePrewarmMode: 'on_demand',
+        },
+      },
+    ]),
+    ['timing v11 · prewarm on-demand'],
+  );
 });
 
 test('adds a new field only when the edited last field has content', () => {
