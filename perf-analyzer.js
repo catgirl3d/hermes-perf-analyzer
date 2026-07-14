@@ -189,42 +189,92 @@ const GROUPS = [
   },
 ];
 
-const BACKEND_FIELDS = [
-  { key: 'outsideHandlerMs', label: 'Outside handler RTT', desc: 'Full round-trip outside backend handler' },
-  { key: 'unmeasuredMs', label: 'Unmeasured RTT', desc: 'RTT not covered by instrumentation' },
-  { key: 'clientReqAckMs', label: 'Client → ACK', desc: 'Time until client received RPC ack' },
-  { key: 'clientReqAckTransportMs', label: 'Client → ACK transport', desc: 'ACK wait excluding renderer event queue' },
-  { key: 'clientAckEventQueueMs', label: 'ACK event queue', desc: 'Renderer queue before ACK callback' },
-  { key: 'clientAckToRespMs', label: 'ACK → response', desc: 'Time from ACK to full response received' },
-  { key: 'clientMessageQueueMs', label: 'Response event queue', desc: 'Renderer queue before response callback' },
-  { key: 'handlerMs', label: 'Backend handler', desc: 'Pure handler execution time' },
-  { key: 'dispatchQueueMs', label: 'Dispatch queue', desc: 'Backend RPC pool queue wait' },
-  { key: 'eventLoopQueueMs', label: 'Response loop queue', desc: 'Transport write → event-loop send coroutine' },
-  { key: 'handlerToWriteMs', label: 'Handler → write', desc: 'Handler return → transport write' },
-  { key: 'historyReadMs', label: 'History DB read', desc: 'Reading message history from SQLite' },
-  { key: 'dbOpenMs', label: 'DB open', desc: 'Opening the session database' },
-  { key: 'sessionLookupMs', label: 'Session lookup', desc: 'Session lookup in DB' },
-  { key: 'liveLookupMs', label: 'Live lookup', desc: 'Looking up the live session' },
-  { key: 'liveRegisterMs', label: 'Live register', desc: 'Registering the resumed live session' },
-  { key: 'reopenMs', label: 'Session reopen', desc: 'Reopening the persisted session' },
-  { key: 'tipResolveMs', label: 'Tip resolve', desc: 'Resolving the session tip' },
-  { key: 'slotClaimMs', label: 'Slot claim', desc: 'Live session slot claim' },
-  { key: 'recordPrepareMs', label: 'Record prepare', desc: 'Preparing response record' },
-  { key: 'resumeInfoMs', label: 'Resume info', desc: 'Resume info fetch' },
-  { key: 'promptSetupMs', label: 'Prompt setup', desc: 'Setting up prompt' },
-  { key: 'messageTransportMs', label: 'Message transport', desc: 'Serialization + send' },
-  { key: 'jsonSerializeMs', label: 'JSON serialize', desc: 'Backend JSON serialize' },
-  { key: 'wsReceiveToAckMs', label: 'WS receive → ACK', desc: 'Backend work after receive_text returned' },
-  { key: 'wsAckSendMs', label: 'WS ACK send', desc: 'ACK flush and send on backend' },
-  { key: 'responseSendMs', label: 'Response send', desc: 'Backend response send_text duration' },
-  { key: 'responseSendTotalMs', label: 'Response send total', desc: 'Buffered prefix plus response send' },
-  { key: 'agentBuildActiveCount', label: 'Agent builds active', desc: 'Active builds when backend received request', unit: 'count' },
-  { key: 'agentBuildActiveMaxMs', label: 'Active build elapsed', desc: 'Longest active build elapsed at ACK' },
-  { key: 'agentBuildLastDurMs', label: 'Agent build (last)', desc: 'Last agent init duration' },
-  { key: 'agentBuildLastAgoMs', label: 'Agent build (ago)', desc: 'How long ago agent was last built' },
-  { key: 'clientJsonParseMs', label: 'Client JSON parse', desc: 'Client-side parse time' },
-  { key: 'clientRespChars', label: 'Response size', desc: 'Serialized response length', unit: 'chars' },
+const BACKEND_GROUPS = [
+  {
+    id: 'critical',
+    label: 'Critical breakdown',
+    description: 'Top-level request timings. Derived rows are calculated rather than directly timed spans.',
+    distribution: 'latency',
+    fields: [
+      { key: 'handlerMs', traceKey: 'backendHandlerMs', label: 'Backend handler', desc: 'Pure handler execution time' },
+      { key: 'outsideHandlerMs', traceKey: 'outsideHandlerRoundTripMs', label: 'Outside handler RTT', desc: 'Full round-trip outside backend handler', kind: 'derived' },
+      { key: 'unmeasuredMs', traceKey: 'unmeasuredRoundTripMs', label: 'Unmeasured RTT', desc: 'RTT not covered by instrumentation', kind: 'derived' },
+    ],
+  },
+  {
+    id: 'handler',
+    label: 'Backend handler details',
+    description: 'Reported work inside the handler. Rows may overlap and are not additive.',
+    distribution: 'latency',
+    fields: [
+      { key: 'historyReadMs', traceKey: 'backendHistoryReadMs', label: 'History DB read', desc: 'Reading message history from SQLite' },
+      { key: 'dbOpenMs', traceKey: 'backendDbOpenMs', label: 'DB open', desc: 'Opening the session database' },
+      { key: 'sessionLookupMs', traceKey: 'backendSessionLookupMs', label: 'Session lookup', desc: 'Session lookup in DB' },
+      { key: 'liveLookupMs', traceKey: 'backendLiveLookupMs', label: 'Live lookup', desc: 'Looking up the live session' },
+      { key: 'liveRegisterMs', traceKey: 'backendLiveRegisterMs', label: 'Live register', desc: 'Registering the resumed live session' },
+      { key: 'reopenMs', traceKey: 'backendReopenMs', label: 'Session reopen', desc: 'Reopening the persisted session' },
+      { key: 'tipResolveMs', traceKey: 'backendTipResolveMs', label: 'Tip resolve', desc: 'Resolving the session tip' },
+      { key: 'slotClaimMs', traceKey: 'backendSlotClaimMs', label: 'Slot claim', desc: 'Live session slot claim' },
+      { key: 'recordPrepareMs', traceKey: 'backendRecordPrepareMs', label: 'Record prepare', desc: 'Preparing response record' },
+      { key: 'resumeInfoMs', traceKey: 'backendResumeInfoMs', label: 'Resume info', desc: 'Resume info fetch' },
+      { key: 'promptSetupMs', traceKey: 'backendPromptSetupMs', label: 'Prompt setup', desc: 'Setting up prompt' },
+    ],
+  },
+  {
+    id: 'server',
+    label: 'Queues & server transport',
+    description: 'Backend queueing, serialization, and WebSocket delivery.',
+    distribution: 'latency',
+    fields: [
+      { key: 'dispatchQueueMs', traceKey: 'backendDispatchQueueMs', label: 'Dispatch queue', desc: 'Backend RPC pool queue wait' },
+      { key: 'eventLoopQueueMs', traceKey: 'backendEventLoopQueueMs', label: 'Response loop queue', desc: 'Transport write → event-loop send coroutine' },
+      { key: 'handlerToWriteMs', traceKey: 'backendHandlerToWriteMs', label: 'Handler → write', desc: 'Handler return → transport write' },
+      { key: 'messageTransportMs', traceKey: 'backendMessageTransportMs', label: 'Message transport', desc: 'Serialization + send' },
+      { key: 'jsonSerializeMs', traceKey: 'backendJsonSerializeMs', label: 'JSON serialize', desc: 'Backend JSON serialize' },
+      { key: 'wsReceiveToAckMs', traceKey: 'backendWsReceiveToAckMs', label: 'WS receive → ACK', desc: 'Backend work after receive_text returned' },
+      { key: 'wsAckSendMs', traceKey: 'backendWsAckSendMs', label: 'WS ACK send', desc: 'ACK flush and send on backend' },
+      { key: 'responseSendMs', traceKey: 'backendResponseSendMs', label: 'Response send', desc: 'Backend response send_text duration' },
+      { key: 'responseSendTotalMs', traceKey: 'backendSendTotalMs', label: 'Response send total', desc: 'Buffered prefix plus response send' },
+    ],
+  },
+  {
+    id: 'client',
+    label: 'Client transport & parsing',
+    description: 'Renderer acknowledgement, response delivery, queueing, and parsing.',
+    distribution: 'latency',
+    fields: [
+      { key: 'clientReqAckMs', traceKey: 'clientRequestReceiveAckMs', label: 'Client → ACK', desc: 'Time until client received RPC ack' },
+      { key: 'clientReqAckTransportMs', traceKey: 'clientRequestReceiveAckTransportMs', label: 'Client → ACK transport', desc: 'ACK wait excluding renderer event queue' },
+      { key: 'clientAckEventQueueMs', traceKey: 'clientReceiveAckEventQueueMs', label: 'ACK event queue', desc: 'Renderer queue before ACK callback' },
+      { key: 'clientAckToRespMs', traceKey: 'clientReceiveAckToResponseMs', label: 'ACK → response', desc: 'Time from ACK to full response received' },
+      { key: 'clientMessageQueueMs', traceKey: 'clientMessageEventQueueMs', label: 'Response event queue', desc: 'Renderer queue before response callback' },
+      { key: 'clientJsonParseMs', traceKey: 'clientJsonParseMs', label: 'Client JSON parse', desc: 'Client-side parse time' },
+    ],
+  },
+  {
+    id: 'state',
+    label: 'Backend state at response',
+    description: 'State snapshots captured around the response, not time spent by this RPC.',
+    distribution: 'spread',
+    fields: [
+      { key: 'agentBuildActiveCount', traceKey: 'backendAgentBuildActiveCount', label: 'Agent builds active', desc: 'Active builds when backend received request', unit: 'count', kind: 'snapshot' },
+      { key: 'agentBuildActiveMaxMs', traceKey: 'backendAgentBuildActiveMaxElapsedMs', label: 'Active build elapsed', desc: 'Longest active build elapsed at ACK', kind: 'snapshot' },
+      { key: 'agentBuildLastDurMs', traceKey: 'backendAgentBuildLastDurationMs', label: 'Agent build (last)', desc: 'Last agent init duration', kind: 'snapshot' },
+      { key: 'agentBuildLastAgoMs', traceKey: 'backendAgentBuildLastFinishedAgoMs', label: 'Agent build (ago)', desc: 'How long ago agent was last built', kind: 'snapshot' },
+    ],
+  },
+  {
+    id: 'context',
+    label: 'Response context',
+    description: 'Payload characteristics that help explain timings but are not latency.',
+    distribution: 'spread',
+    fields: [
+      { key: 'clientRespChars', traceKey: 'clientResponseChars', label: 'Response size', desc: 'Serialized response length', unit: 'chars', kind: 'context' },
+    ],
+  },
 ];
+
+const BACKEND_FIELDS = BACKEND_GROUPS.flatMap((group) => group.fields);
 
 const COMPARISON_METRICS = [
   { label: 'Total elapsed', key: 'elapsedMs' },
@@ -439,6 +489,42 @@ function computeStats(rows, key, subKey) {
     max: Math.max(...values),
     n: values.length,
   };
+}
+
+function buildBackendGroups(rows) {
+  const backendRows = rows.filter((row) => row?._hasBackend && row.backend);
+  return BACKEND_GROUPS.map((group) => {
+    const metrics = group.fields.map((field) => {
+      const stats = computeStats(backendRows, null, field.key);
+      if (!stats || stats.n === 0) return null;
+      return {
+        ...field,
+        kind: field.kind || 'timing',
+        unit: field.unit || 'ms',
+        variationLabel: group.distribution === 'spread' ? 'spread' : 'tail',
+        coverage: {
+          sampled: stats.n,
+          total: rows.length,
+          status: stats.n === rows.length ? 'complete' : 'partial',
+        },
+        details: {
+          p95: stats.p95,
+          max: stats.max,
+          traceKey: field.traceKey || field.key,
+        },
+        stats,
+        summary: summarizePercentiles(stats.med, stats.p90, stats.n),
+      };
+    }).filter(Boolean);
+
+    return {
+      id: group.id,
+      label: group.label,
+      description: group.description,
+      distribution: group.distribution,
+      metrics,
+    };
+  }).filter((group) => group.metrics.length > 0);
 }
 
 function summarizePercentiles(p50, p90Value, sampleCount) {
@@ -918,28 +1004,76 @@ function renderResults(rows) {
     $('backendContext').innerHTML = buildBackendContextLabels(backendRows)
       .map((label) => `<span class="backend-context-chip">${escapeHtml(label)}</span>`)
       .join('');
-    $('backendGrid').innerHTML = BACKEND_FIELDS.map((field) => {
-      const stats = computeStats(backendRows, null, field.key);
-      if (!stats || stats.n === 0) return '';
-      const unit = field.unit === 'count' ? '' : field.unit === 'chars' ? ' chars' : ' ms';
-      const summary = summarizePercentiles(stats.med, stats.p90, stats.n);
-      const rangeStart = Math.min(summary.p50Position, summary.p90Position);
-      const rangeWidth = Math.abs(summary.p90Position - summary.p50Position);
-      return `<div class="backend-card">
-        <div class="bc-label">${field.label}</div>
-        <div class="bc-vals"><span>p50 ${fmt(stats.med)}${unit}</span><span>p90 ${fmt(stats.p90)}${unit}</span></div>
-        <div class="bc-sub">${field.desc}</div>
-        <div class="bc-tail">
-          <span class="tail-value tail-${summary.stability}">tail ${formatSigned(summary.delta, unit)} · ${formatSigned(summary.percent, '%')}</span>
-          <span class="tail-confidence">n=${stats.n} · ${summary.confidence}</span>
+    $('backendGrid').innerHTML = buildBackendGroups(rows).map((group) => `
+      <section class="backend-group backend-group-${group.id}">
+        <div class="backend-group-head">
+          <div>
+            <h4>${escapeHtml(group.label)}</h4>
+            <p>${escapeHtml(group.description)}</p>
+          </div>
+          <span class="backend-group-count">${group.metrics.length} metric${group.metrics.length === 1 ? '' : 's'}</span>
         </div>
-        <div class="percentile-track" title="p50 ${fmt(stats.med)}${unit}; p90 ${fmt(stats.p90)}${unit}">
-          <div class="percentile-range" style="left:${rangeStart.toFixed(1)}%;width:${rangeWidth.toFixed(1)}%"></div>
-          <span class="percentile-marker p50" style="left:${summary.p50Position.toFixed(1)}%"></span>
-          <span class="percentile-marker p90" style="left:${summary.p90Position.toFixed(1)}%"></span>
+        <div class="backend-grid">
+          ${group.metrics.map((metric) => {
+            const unit = metric.unit === 'count' ? '' : metric.unit === 'chars' ? ' chars' : ' ms';
+            const unitLabel = unit.trim();
+            const rangeStart = Math.min(metric.summary.p50Position, metric.summary.p90Position);
+            const rangeWidth = Math.abs(metric.summary.p90Position - metric.summary.p50Position);
+            const variationClass = group.distribution === 'latency'
+              ? `tail-${metric.summary.stability}`
+              : 'tail-spread';
+            const kindBadge = metric.kind === 'timing'
+              ? ''
+              : `<span class="bc-kind bc-kind-${metric.kind}">${metric.kind}</span>`;
+            const traceField = escapeHtml(metric.details.traceKey);
+            const coverageFlag = metric.coverage.status === 'partial'
+              ? '<span class="coverage-partial">partial</span>'
+              : '';
+            const detailTitle = `${traceField}: p95 ${fmt(metric.details.p95)}${unit}; max ${fmt(metric.details.max)}${unit}; coverage ${metric.coverage.sampled}/${metric.coverage.total} (${metric.coverage.status})`;
+            return `<article class="backend-card backend-card-${metric.kind}" title="${detailTitle}">
+              <div class="bc-heading">
+                <div class="bc-label">${escapeHtml(metric.label)}</div>
+                ${kindBadge}
+              </div>
+              <div class="bc-vals">
+                <div class="percentile-stat p50">
+                  <span class="percentile-stat-label">p50</span>
+                  <span class="percentile-stat-reading"><strong>${fmt(metric.stats.med)}</strong>${unitLabel ? `<small>${unitLabel}</small>` : ''}</span>
+                </div>
+                <div class="percentile-stat p90">
+                  <span class="percentile-stat-label">p90</span>
+                  <span class="percentile-stat-reading"><strong>${fmt(metric.stats.p90)}</strong>${unitLabel ? `<small>${unitLabel}</small>` : ''}</span>
+                </div>
+              </div>
+              <div class="bc-sub">${escapeHtml(metric.desc)}</div>
+              <div class="bc-tail">
+                <span class="tail-value ${variationClass}">${metric.variationLabel} ${formatSigned(metric.summary.delta, unit)} · ${formatSigned(metric.summary.percent, '%')}</span>
+                <span class="tail-confidence">
+                  <span>coverage ${metric.coverage.sampled}/${metric.coverage.total}</span>
+                  ${coverageFlag}
+                  <span>${metric.summary.confidence}</span>
+                </span>
+              </div>
+              <div class="percentile-track" title="${traceField}: p50 ${fmt(metric.stats.med)}${unit}; p90 ${fmt(metric.stats.p90)}${unit}">
+                <div class="percentile-range percentile-range-${group.distribution}" style="left:${rangeStart.toFixed(1)}%;width:${rangeWidth.toFixed(1)}%"></div>
+                <span class="percentile-marker p50" style="left:${metric.summary.p50Position.toFixed(1)}%"></span>
+                <span class="percentile-marker p90" style="left:${metric.summary.p90Position.toFixed(1)}%"></span>
+              </div>
+              <details class="bc-details">
+                <summary>p95 · max · field</summary>
+                <div class="bc-details-content">
+                  <div class="bc-details-stats">
+                    <span><small>p95</small>${fmt(metric.details.p95)}${unit}</span>
+                    <span><small>max</small>${fmt(metric.details.max)}${unit}</span>
+                  </div>
+                  <code>${traceField}</code>
+                </div>
+              </details>
+            </article>`;
+          }).join('')}
         </div>
-      </div>`;
-    }).join('');
+      </section>
+    `).join('');
   } else {
     backendSection.style.display = 'none';
     $('backendContext').innerHTML = '';
@@ -1127,6 +1261,7 @@ if (typeof document !== 'undefined') {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     buildComparisonRows,
+    buildBackendGroups,
     buildComparisonTextReport,
     buildBackendContextLabels,
     summarizePercentiles,

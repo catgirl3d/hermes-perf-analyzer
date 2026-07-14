@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   buildComparisonRows,
+  buildBackendGroups,
   buildComparisonTextReport,
   buildBackendContextLabels,
   summarizePercentiles,
@@ -134,6 +135,153 @@ test('labels timing v11 as on-demand agent construction', () => {
     ]),
     ['timing v11 · prewarm on-demand'],
   );
+});
+
+test('labels timing v12 as composer-intent prewarm', () => {
+  assert.deepEqual(
+    buildBackendContextLabels([
+      {
+        _hasBackend: true,
+        backend: {
+          timingVersion: 12,
+          resumePrewarmEnabled: 0,
+          resumePrewarmMode: 'composer_intent',
+        },
+      },
+    ]),
+    ['timing v12 · prewarm composer-intent'],
+  );
+});
+
+test('groups available backend metrics by diagnostic meaning', () => {
+  const rows = [
+    {
+      _hasBackend: true,
+      backend: {
+        handlerMs: 10,
+        outsideHandlerMs: 30,
+        historyReadMs: 8,
+        clientJsonParseMs: 1,
+        agentBuildActiveCount: 0,
+        clientRespChars: 1000,
+      },
+    },
+    {
+      _hasBackend: true,
+      backend: {
+        handlerMs: 30,
+        outsideHandlerMs: 50,
+        historyReadMs: 12,
+        clientJsonParseMs: 2,
+        agentBuildActiveCount: 1,
+        clientRespChars: 2000,
+      },
+    },
+  ];
+
+  const groups = buildBackendGroups(rows);
+
+  assert.deepEqual(groups.map((group) => group.id), [
+    'critical',
+    'handler',
+    'client',
+    'state',
+    'context',
+  ]);
+  assert.deepEqual(
+    groups.find((group) => group.id === 'critical').metrics.map((metric) => metric.key),
+    ['handlerMs', 'outsideHandlerMs'],
+  );
+
+  const outsideHandler = groups
+    .find((group) => group.id === 'critical')
+    .metrics.find((metric) => metric.key === 'outsideHandlerMs');
+  assert.equal(outsideHandler.kind, 'derived');
+  assert.equal(outsideHandler.variationLabel, 'tail');
+  assert.deepEqual(outsideHandler.stats, {
+    med: 40,
+    p90: 48,
+    p95: 49,
+    min: 30,
+    max: 50,
+    n: 2,
+  });
+  assert.deepEqual(outsideHandler.coverage, {
+    sampled: 2,
+    total: 2,
+    status: 'complete',
+  });
+  assert.deepEqual(outsideHandler.details, {
+    p95: 49,
+    max: 50,
+    traceKey: 'outsideHandlerRoundTripMs',
+  });
+
+  const buildCount = groups
+    .find((group) => group.id === 'state')
+    .metrics.find((metric) => metric.key === 'agentBuildActiveCount');
+  assert.equal(buildCount.kind, 'snapshot');
+  assert.equal(buildCount.variationLabel, 'spread');
+  assert.equal(buildCount.unit, 'count');
+
+  const responseSize = groups
+    .find((group) => group.id === 'context')
+    .metrics.find((metric) => metric.key === 'clientRespChars');
+  assert.equal(responseSize.kind, 'context');
+  assert.equal(responseSize.variationLabel, 'spread');
+  assert.equal(responseSize.unit, 'chars');
+});
+
+test('omits backend metrics and groups without samples', () => {
+  const groups = buildBackendGroups([
+    {
+      _hasBackend: true,
+      backend: {
+        handlerMs: 12,
+      },
+    },
+    {
+      _hasBackend: false,
+      backend: {
+        clientJsonParseMs: 99,
+      },
+    },
+  ]);
+
+  assert.deepEqual(groups.map((group) => group.id), ['critical']);
+  assert.deepEqual(groups[0].metrics.map((metric) => metric.key), ['handlerMs']);
+  assert.deepEqual(groups[0].metrics[0].coverage, {
+    sampled: 1,
+    total: 2,
+    status: 'partial',
+  });
+});
+
+test('marks metric coverage as partial when backend samples omit the field', () => {
+  const groups = buildBackendGroups([
+    {
+      _hasBackend: true,
+      backend: {
+        handlerMs: 12,
+      },
+    },
+    {
+      _hasBackend: true,
+      backend: {
+        handlerMs: NaN,
+        clientJsonParseMs: 4,
+      },
+    },
+  ]);
+
+  const handler = groups
+    .find((group) => group.id === 'critical')
+    .metrics.find((metric) => metric.key === 'handlerMs');
+  assert.deepEqual(handler.coverage, {
+    sampled: 1,
+    total: 2,
+    status: 'partial',
+  });
 });
 
 test('adds a new field only when the edited last field has content', () => {

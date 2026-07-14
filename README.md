@@ -23,7 +23,7 @@ You can paste either:
 - a trace object: `{ "elapsedMs": 1234, "stages": [...] }`
 - or a raw stages array: `[{ "name": "resume-rpc-start", "atMs": 120 }, ...]`
 
-Both legacy and new/snapshot timing layouts are supported, including prewarm metadata through timing v11 and its additional live lookup, live register, reopen, and tip-resolve timings. In v9, `resume_prewarm_enabled: 0` plus `resume_prewarm_mode: post_paint` means Desktop starts prewarm after the visible paint boundary. Timing v10 identifies the reverse A-B-A control with `resume_prewarm_mode: immediate`. Timing v11 uses `resume_prewarm_mode: on_demand`, so agent construction starts when the first prompt is submitted.
+Both legacy and new/snapshot timing layouts are supported, including prewarm metadata through timing v12 and its additional live lookup, live register, reopen, and tip-resolve timings. In v9, `resume_prewarm_enabled: 0` plus `resume_prewarm_mode: post_paint` means Desktop starts prewarm after the visible paint boundary. Timing v10 identifies the reverse A-B-A control with `resume_prewarm_mode: immediate`. Timing v11 uses `resume_prewarm_mode: on_demand`. Timing v12 uses `resume_prewarm_mode: composer_intent`, so agent construction starts on the first text, attachment, or voice interaction.
 
 ## Measurement Sets
 

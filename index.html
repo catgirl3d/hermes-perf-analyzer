@@ -68,7 +68,7 @@
   </div>
   <div>
     <h1>Hermes Perf Analyzer</h1>
-    <p>cold-resumed · p50 / p90 / p95 · timing v1–v11 · shareable text report</p>
+    <p>cold-resumed · p50 / p90 / p95 · timing v1–v12 · shareable text report</p>
   </div>
 </header>
 
@@ -170,10 +170,16 @@
 
     <!-- backend breakdown (new format only) -->
     <div class="breakdown-section" id="backendBreakdown" style="display:none">
-      <h3>Backend sub-timings (from resume-rpc-finished)</h3>
-      <p class="breakdown-note"><strong>How to read:</strong> p50 is typical, p90 is the slow tail, and tail = p90 − p50. A small green tail is stable; a large red tail means high variability. The line marks p50, the dot marks p90. Below 10 samples, treat p90 as low confidence.</p>
+      <div class="breakdown-title">
+        <div>
+          <h3>Resume RPC diagnostics</h3>
+          <p class="breakdown-kicker">Latency, transport, runtime state, and response context</p>
+        </div>
+        <span class="backend-source">source · resume-rpc-finished</span>
+      </div>
+      <p class="breakdown-note"><strong>How to read:</strong> every card aggregates all parsed samples. Timing groups use tail = p90 − p50; snapshot and context groups use spread because they are not RPC spans. The line marks p50 and the dot marks p90. Groups are diagnostic, not additive. Below 10 samples, treat p90 as low confidence.</p>
       <div class="backend-context" id="backendContext"></div>
-      <div class="backend-grid" id="backendGrid"></div>
+      <div class="backend-groups" id="backendGrid"></div>
     </div>
 
     <!-- plain-text report for sharing -->
