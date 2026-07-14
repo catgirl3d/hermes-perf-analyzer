@@ -21,7 +21,7 @@ const {
   selectSetForComparison,
   serializeSetTracesForInputs,
   shouldAppendTrailingTrace,
-} = require('./perf-analyzer.js');
+} = require('../src/index.js');
 
 function trace(elapsedMs, rpcDurationMs) {
   return {

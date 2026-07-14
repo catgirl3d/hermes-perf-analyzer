@@ -16,6 +16,12 @@ Measurement runs can be saved as named sets in browser storage. Select any two s
 
 No build step, server, or dependencies are required.
 
+## Layout
+
+- `src/` contains the browser app split by responsibility: trace parsing, stats/reporting, measurement-set persistence, UI helpers, and app bootstrap.
+- `tests/` contains the Node test suite for the shared logic.
+- `samples/` contains the example trace set loaded by the UI.
+
 ## Supported Input
 
 You can paste either:
