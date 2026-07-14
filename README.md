@@ -23,7 +23,7 @@ You can paste either:
 - a trace object: `{ "elapsedMs": 1234, "stages": [...] }`
 - or a raw stages array: `[{ "name": "resume-rpc-start", "atMs": 120 }, ...]`
 
-Both legacy and new/snapshot timing layouts are supported.
+Both legacy and new/snapshot timing layouts are supported, including timing v9 prewarm metadata and its additional live lookup, live register, reopen, and tip-resolve timings.
 
 ## Measurement Sets
 
@@ -60,3 +60,5 @@ When two sets are selected, the app also generates a separate **Shareable compar
 - persistent named measurement sets and A/B median deltas
 - shareable aggregate report with copy/save actions
 - separate LLM-ready A/B comparison report
+
+For backend cards, `p50` is the typical value and `p90` is the slow tail. `tail = p90 - p50`: a small green tail indicates stable timings, while a large red tail indicates high variability. Treat `p90` as low confidence when there are fewer than 10 samples.

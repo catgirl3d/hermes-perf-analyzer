@@ -204,6 +204,10 @@ const BACKEND_FIELDS = [
   { key: 'historyReadMs', label: 'History DB read', desc: 'Reading message history from SQLite' },
   { key: 'dbOpenMs', label: 'DB open', desc: 'Opening the session database' },
   { key: 'sessionLookupMs', label: 'Session lookup', desc: 'Session lookup in DB' },
+  { key: 'liveLookupMs', label: 'Live lookup', desc: 'Looking up the live session' },
+  { key: 'liveRegisterMs', label: 'Live register', desc: 'Registering the resumed live session' },
+  { key: 'reopenMs', label: 'Session reopen', desc: 'Reopening the persisted session' },
+  { key: 'tipResolveMs', label: 'Tip resolve', desc: 'Resolving the session tip' },
   { key: 'slotClaimMs', label: 'Slot claim', desc: 'Live session slot claim' },
   { key: 'recordPrepareMs', label: 'Record prepare', desc: 'Preparing response record' },
   { key: 'resumeInfoMs', label: 'Resume info', desc: 'Resume info fetch' },
@@ -230,6 +234,10 @@ const COMPARISON_METRICS = [
   { label: 'Paint wait', key: 'raf2WaitMs' },
   { label: 'Backend handler', subKey: 'handlerMs' },
   { label: 'DB open', subKey: 'dbOpenMs' },
+  { label: 'Live lookup', subKey: 'liveLookupMs' },
+  { label: 'Live register', subKey: 'liveRegisterMs' },
+  { label: 'Session reopen', subKey: 'reopenMs' },
+  { label: 'Tip resolve', subKey: 'tipResolveMs' },
   { label: 'Outside handler RTT', subKey: 'outsideHandlerMs' },
 ];
 
@@ -357,6 +365,10 @@ function extract(trace) {
     historyReadMs: readBackend('backendHistoryReadMs'),
     dbOpenMs: readBackend('backendDbOpenMs'),
     sessionLookupMs: readBackend('backendSessionLookupMs'),
+    liveLookupMs: readBackend('backendLiveLookupMs'),
+    liveRegisterMs: readBackend('backendLiveRegisterMs'),
+    reopenMs: readBackend('backendReopenMs'),
+    tipResolveMs: readBackend('backendTipResolveMs'),
     recordPrepareMs: readBackend('backendRecordPrepareMs'),
     slotClaimMs: readBackend('backendSlotClaimMs'),
     resumeInfoMs: readBackend('backendResumeInfoMs'),
@@ -384,6 +396,8 @@ function extract(trace) {
     responseSendMs: resumeResponseSent.backendResponseSendMs ?? NaN,
     responseSendTotalMs: resumeResponseSent.backendSendTotalMs ?? NaN,
     timingVersion: readBackend('backendTimingVersion'),
+    resumePrewarmEnabled: rpcFinished.backendResumePrewarmEnabled ?? null,
+    resumePrewarmMode: rpcFinished.backendResumePrewarmMode ?? null,
   };
 
   return {
@@ -427,6 +441,35 @@ function computeStats(rows, key, subKey) {
   };
 }
 
+function summarizePercentiles(p50, p90Value, sampleCount) {
+  const scaleMax = Math.max(
+    Number.isFinite(p50) ? p50 : 0,
+    Number.isFinite(p90Value) ? p90Value : 0,
+    0,
+  );
+  const delta = Number.isFinite(p50) && Number.isFinite(p90Value) ? p90Value - p50 : NaN;
+  const percent = Number.isFinite(delta) && p50 !== 0
+    ? (delta / p50) * 100
+    : delta === 0
+      ? 0
+      : NaN;
+  const stability = !Number.isFinite(percent)
+    ? 'volatile'
+    : percent <= 10
+      ? 'stable'
+      : percent <= 30
+        ? 'moderate'
+        : 'volatile';
+  return {
+    p50Position: scaleMax === 0 ? 0 : Math.max(0, Math.min(100, (p50 / scaleMax) * 100)),
+    p90Position: scaleMax === 0 ? 0 : Math.max(0, Math.min(100, (p90Value / scaleMax) * 100)),
+    delta,
+    percent,
+    stability,
+    confidence: sampleCount < 10 ? 'low confidence' : 'supported',
+  };
+}
+
 function buildComparisonRows(rowsA, rowsB) {
   return COMPARISON_METRICS.map((metric) => {
     const statsA = computeStats(rowsA, metric.key, metric.subKey);
@@ -440,12 +483,35 @@ function buildComparisonRows(rowsA, rowsB) {
   }).filter((row) => Number.isFinite(row.valueA) || Number.isFinite(row.valueB));
 }
 
-function buildComparisonTextReport(setA, setB, comparisonRows) {
+function formatBackendContext(backend) {
+  const parts = [
+    Number.isFinite(backend.timingVersion) ? `timing v${fmt(backend.timingVersion, 0)}` : 'legacy timing',
+  ];
+  if (backend.resumePrewarmEnabled === true || backend.resumePrewarmEnabled === 1) {
+    parts.push('prewarm enabled');
+  } else if (backend.resumePrewarmEnabled === false || backend.resumePrewarmEnabled === 0) {
+    parts.push('prewarm disabled');
+  }
+  if (typeof backend.resumePrewarmMode === 'string' && backend.resumePrewarmMode.trim()) {
+    parts.push(`mode ${backend.resumePrewarmMode.trim()}`);
+  }
+  return parts.join(' · ');
+}
+
+function buildBackendContextLabels(rows) {
+  return [...new Set(rows.filter((row) => row._hasBackend).map((row) => formatBackendContext(row.backend)))];
+}
+
+function buildComparisonTextReport(setA, setB, comparisonRows, rowsA, rowsB) {
   const oneLine = (value) => String(value).replace(/\s+/g, ' ').trim();
+  const contextA = buildBackendContextLabels(rowsA).join(', ') || 'no backend timing';
+  const contextB = buildBackendContextLabels(rowsB).join(', ') || 'no backend timing';
   const lines = [
     'HERMES MEASUREMENT SET COMPARISON',
     `A: ${oneLine(setA.name)} | samples: ${setA.traces.length}`,
+    `A backend: ${contextA}`,
     `B: ${oneLine(setB.name)} | samples: ${setB.traces.length}`,
+    `B backend: ${contextB}`,
     'delta: B - A | negative means B is faster',
     '',
     'P50 METRICS',
@@ -497,9 +563,11 @@ function buildTextReport(rows) {
     .map((version) => `v${version}`)
     .join(', ') || 'legacy';
   const activeBuildSamples = rows.filter((row) => row.backend.agentBuildActiveCount > 0).length;
+  const backendContexts = buildBackendContextLabels(rows).join(' | ') || 'none';
   const lines = [
     'HERMES COLD-RESUME PERFORMANCE REPORT',
     `samples: ${rows.length} | timing: ${timingVersions} | active-build samples: ${activeBuildSamples}/${rows.length}`,
+    `backend context: ${backendContexts}`,
     '',
     'SUMMARY',
     reportStat('Total elapsed', computeStats(rows, 'elapsedMs')),
@@ -529,6 +597,7 @@ function buildTextReport(rows) {
       `messages=${row.messageCount ?? '?'}`,
       `builds=${fmt(backend.agentBuildActiveCount, 0)}`,
       `timing=v${Number.isFinite(backend.timingVersion) ? fmt(backend.timingVersion, 0) : '?'}`,
+      `prewarm=${backend.resumePrewarmEnabled === 1 || backend.resumePrewarmEnabled === true ? 'on' : backend.resumePrewarmEnabled === 0 || backend.resumePrewarmEnabled === false ? 'off' : '?'}:${backend.resumePrewarmMode || '?'}`,
     ].join(' | '));
   });
 
@@ -665,7 +734,7 @@ function renderComparison() {
       <td class="td-num ${cls}">${formatSigned(row.percent, '%')}</td>
     </tr>`;
   }).join('');
-  lastComparisonReport = buildComparisonTextReport(setA, setB, comparisonRows);
+  lastComparisonReport = buildComparisonTextReport(setA, setB, comparisonRows, rowsA, rowsB);
   $('comparisonReportOutput').textContent = lastComparisonReport;
   $('copyComparisonButton').textContent = 'Copy comparison';
   section.hidden = false;
@@ -829,28 +898,34 @@ function renderResults(rows) {
   if (rows.some((row) => row._hasBackend)) {
     backendSection.style.display = 'block';
     const backendRows = rows.filter((row) => row._hasBackend);
-    const backendGlobalMax = Math.max(
-      ...BACKEND_FIELDS.map((field) => computeStats(backendRows, null, field.key)?.max ?? NaN).filter((value) => !isNaN(value)),
-      1,
-    );
+    $('backendContext').innerHTML = buildBackendContextLabels(backendRows)
+      .map((label) => `<span class="backend-context-chip">${escapeHtml(label)}</span>`)
+      .join('');
     $('backendGrid').innerHTML = BACKEND_FIELDS.map((field) => {
       const stats = computeStats(backendRows, null, field.key);
       if (!stats || stats.n === 0) return '';
-      const barMedian = ((stats.med / backendGlobalMax) * 100).toFixed(1);
-      const barP90 = ((stats.p90 / backendGlobalMax) * 100).toFixed(1);
       const unit = field.unit === 'count' ? '' : field.unit === 'chars' ? ' chars' : ' ms';
+      const summary = summarizePercentiles(stats.med, stats.p90, stats.n);
+      const rangeStart = Math.min(summary.p50Position, summary.p90Position);
+      const rangeWidth = Math.abs(summary.p90Position - summary.p50Position);
       return `<div class="backend-card">
         <div class="bc-label">${field.label}</div>
-        <div class="bc-vals">${fmt(stats.med)} <span style="color:var(--muted);font-size:11px">/ p90 <span style="color:var(--medium)">${fmt(stats.p90)}</span>${unit}</span></div>
+        <div class="bc-vals"><span>p50 ${fmt(stats.med)}${unit}</span><span>p90 ${fmt(stats.p90)}${unit}</span></div>
         <div class="bc-sub">${field.desc}</div>
-        <div style="margin-top:8px;display:flex;flex-direction:column;gap:3px">
-          <div class="bar-wrap"><div class="bar-bg"><div class="bar-fill bar-med" style="width:${barMedian}%"></div></div></div>
-          <div class="bar-wrap"><div class="bar-bg"><div class="bar-fill bar-p90" style="width:${barP90}%"></div></div></div>
+        <div class="bc-tail">
+          <span class="tail-value tail-${summary.stability}">tail ${formatSigned(summary.delta, unit)} · ${formatSigned(summary.percent, '%')}</span>
+          <span class="tail-confidence">n=${stats.n} · ${summary.confidence}</span>
+        </div>
+        <div class="percentile-track" title="p50 ${fmt(stats.med)}${unit}; p90 ${fmt(stats.p90)}${unit}">
+          <div class="percentile-range" style="left:${rangeStart.toFixed(1)}%;width:${rangeWidth.toFixed(1)}%"></div>
+          <span class="percentile-marker p50" style="left:${summary.p50Position.toFixed(1)}%"></span>
+          <span class="percentile-marker p90" style="left:${summary.p90Position.toFixed(1)}%"></span>
         </div>
       </div>`;
     }).join('');
   } else {
     backendSection.style.display = 'none';
+    $('backendContext').innerHTML = '';
   }
 
   lastTextReport = buildTextReport(rows);
@@ -1036,6 +1111,8 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     buildComparisonRows,
     buildComparisonTextReport,
+    buildBackendContextLabels,
+    summarizePercentiles,
     computeStats,
     extract,
     loadMeasurementSets,

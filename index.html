@@ -68,7 +68,7 @@
   </div>
   <div>
     <h1>Hermes Perf Analyzer</h1>
-    <p>cold-resumed · p50 / p90 / p95 · timing v1–v7 · shareable text report</p>
+    <p>cold-resumed · p50 / p90 / p95 · timing v1–v9 · shareable text report</p>
   </div>
 </header>
 
@@ -171,6 +171,8 @@
     <!-- backend breakdown (new format only) -->
     <div class="breakdown-section" id="backendBreakdown" style="display:none">
       <h3>Backend sub-timings (from resume-rpc-finished)</h3>
+      <p class="breakdown-note"><strong>How to read:</strong> p50 is typical, p90 is the slow tail, and tail = p90 − p50. A small green tail is stable; a large red tail means high variability. The line marks p50, the dot marks p90. Below 10 samples, treat p90 as low confidence.</p>
+      <div class="backend-context" id="backendContext"></div>
       <div class="backend-grid" id="backendGrid"></div>
     </div>
 

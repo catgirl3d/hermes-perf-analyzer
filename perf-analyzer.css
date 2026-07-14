@@ -244,8 +244,21 @@ td { padding: 10px 16px; }
 /* backend breakdown */
 .breakdown-section { margin-top: 28px; }
 .breakdown-section h3 {
-  font-size: 14px; font-weight: 600; margin-bottom: 12px;
+  font-size: 14px; font-weight: 600; margin-bottom: 6px;
   color: var(--muted); text-transform: uppercase; letter-spacing: .07em;
+}
+.breakdown-note {
+  color: var(--muted); font-size: 11px; line-height: 1.5;
+}
+.breakdown-note strong { color: var(--text); font-weight: 600; }
+.backend-context {
+  display: flex; gap: 6px; flex-wrap: wrap; margin: 9px 0 12px;
+}
+.backend-context:empty { display: none; }
+.backend-context-chip {
+  padding: 4px 8px; border: 1px solid rgba(var(--accent-rgb), .28);
+  border-radius: 999px; background: rgba(var(--accent-rgb), .08);
+  color: var(--accent2); font: 10px var(--mono);
 }
 .backend-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px;
@@ -255,8 +268,40 @@ td { padding: 10px 16px; }
   border-radius: 10px; padding: 12px 14px;
 }
 .bc-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
-.bc-vals  { font-family: var(--mono); font-size: 13px; font-weight: 600; }
+.bc-vals  {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  font-family: var(--mono); font-size: 12px; font-weight: 600;
+}
+.bc-vals span:first-child { color: var(--accent2); }
+.bc-vals span:last-child { color: var(--medium); }
 .bc-sub   { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.bc-tail {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-top: 9px; font-size: 10px;
+}
+.tail-value { font-family: var(--mono); font-weight: 600; }
+.tail-stable { color: var(--ok); }
+.tail-moderate { color: var(--medium); }
+.tail-volatile { color: var(--warn); }
+.tail-confidence { color: var(--muted); text-align: right; }
+.percentile-track {
+  position: relative; height: 8px; margin-top: 8px;
+  background: var(--border); border-radius: 999px;
+}
+.percentile-range {
+  position: absolute; top: 2px; height: 4px;
+  border-radius: 999px; background: rgba(var(--warn-rgb), .55);
+}
+.percentile-marker {
+  position: absolute; top: 50%; z-index: 1; transform: translate(-50%, -50%);
+}
+.percentile-marker.p50 {
+  width: 2px; height: 14px; border-radius: 2px; background: var(--accent2);
+}
+.percentile-marker.p90 {
+  width: 8px; height: 8px; border: 2px solid var(--card);
+  border-radius: 50%; background: var(--warn);
+}
 
 /* shareable report */
 .report-section {

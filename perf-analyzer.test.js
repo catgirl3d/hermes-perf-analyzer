@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const {
   buildComparisonRows,
   buildComparisonTextReport,
+  buildBackendContextLabels,
+  summarizePercentiles,
   extract,
   loadMeasurementSets,
   nextSetName,
@@ -62,7 +64,7 @@ test('builds an LLM-ready comparison report with deltas', () => {
   const setB = { name: 'After', traces: [trace(80, 40), trace(100, 50)] };
   const rowsA = setA.traces.map(normalizeTrace).map(extract);
   const rowsB = setB.traces.map(normalizeTrace).map(extract);
-  const report = buildComparisonTextReport(setA, setB, buildComparisonRows(rowsA, rowsB));
+  const report = buildComparisonTextReport(setA, setB, buildComparisonRows(rowsA, rowsB), rowsA, rowsB);
 
   assert.match(report, /A: Before \| samples: 2/);
   assert.match(report, /B: After \| samples: 2/);
@@ -79,6 +81,41 @@ test('normalizes a raw stages array before extraction', () => {
   assert.equal(normalized.outcome, 'cold-resumed');
   assert.equal(row.elapsedMs, 200);
   assert.equal(row.rpcDurationMs, 60);
+});
+
+test('extracts timing v9 and prewarm metadata from a raw stages array', () => {
+  const stages = [
+    { name: 'runtime-message-repository-built', atMs: 13.2 },
+    { name: 'resume-rpc-start', atMs: 89.5 },
+    {
+      name: 'resume-rpc-finished',
+      atMs: 197.8,
+      sincePreviousStageMs: 108.3,
+      rpcDurationMs: 107.9,
+      backendHandlerMs: 18.04,
+      backendLiveLookupMs: 0.02,
+      backendLiveRegisterMs: 0.03,
+      backendReopenMs: 0.2,
+      backendTipResolveMs: 0.16,
+      backendResumePrewarmEnabled: 0,
+      backendResumePrewarmMode: 'post_paint',
+      backendTimingVersion: 9,
+    },
+    { name: 'paint-raf-2', atMs: 456, waitDurationMs: 256.8 },
+  ];
+  const row = extract(normalizeTrace(stages));
+
+  assert.equal(row._format, 'new');
+  assert.equal(row.elapsedMs, 456);
+  assert.equal(row.backend.liveLookupMs, 0.02);
+  assert.equal(row.backend.liveRegisterMs, 0.03);
+  assert.equal(row.backend.reopenMs, 0.2);
+  assert.equal(row.backend.tipResolveMs, 0.16);
+  assert.equal(row.backend.resumePrewarmEnabled, 0);
+  assert.equal(row.backend.resumePrewarmMode, 'post_paint');
+  assert.deepEqual(buildBackendContextLabels([row]), [
+    'timing v9 · prewarm disabled · mode post_paint',
+  ]);
 });
 
 test('adds a new field only when the edited last field has content', () => {
@@ -102,4 +139,31 @@ test('persists valid measurement sets and ignores broken storage data', () => {
   values.set('hermes-perf-analyzer.measurement-sets.v1', '{broken');
   assert.deepEqual(loadMeasurementSets(storage), []);
   assert.deepEqual(loadMeasurementSets(null), []);
+});
+
+test('summarizes p50 to p90 tail, stability, and confidence', () => {
+  assert.deepEqual(summarizePercentiles(50, 100, 4), {
+    p50Position: 50,
+    p90Position: 100,
+    delta: 50,
+    percent: 100,
+    stability: 'volatile',
+    confidence: 'low confidence',
+  });
+  assert.deepEqual(summarizePercentiles(90, 99, 20), {
+    p50Position: (90 / 99) * 100,
+    p90Position: 100,
+    delta: 9,
+    percent: 10,
+    stability: 'stable',
+    confidence: 'supported',
+  });
+  assert.deepEqual(summarizePercentiles(0, 0, 1), {
+    p50Position: 0,
+    p90Position: 0,
+    delta: 0,
+    percent: 0,
+    stability: 'stable',
+    confidence: 'low confidence',
+  });
 });
