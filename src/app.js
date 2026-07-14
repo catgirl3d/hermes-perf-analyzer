@@ -216,24 +216,35 @@
         ? new Date(set.createdAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })
         : '';
       return `<article class="set-card${selected ? ' selected' : ''}" data-set-id="${escapeHtml(set.id)}">
-        <div class="set-card-head">
-          <label class="set-select">
-            <input type="checkbox" data-action="select-set" ${selected ? 'checked' : ''} />
-            ${comparisonRole ? `<span class="set-role">${comparisonRole}</span>` : ''}
-            <span>${escapeHtml(set.name)}</span>
-          </label>
-          <div class="set-card-actions">
-            <button class="set-restore" type="button" data-action="restore-set" title="Restore traces from ${escapeHtml(set.name)}">
-              ${iconMarkup('refresh', 'icon icon-button')}<span>Restore</span>
-            </button>
-            <button class="set-remove" type="button" data-action="remove-set" title="Delete set" aria-label="Delete ${escapeHtml(set.name)}">
-              ${iconMarkup('close', 'icon icon-button')}
-            </button>
-          </div>
-        </div>
-        <div class="set-meta">
-          <span>${set.traces.length} sample${set.traces.length === 1 ? '' : 's'}${createdAt ? ` · ${createdAt}` : ''}</span>
-          <span class="set-median">${fmtMs(medianElapsed)}</span>
+        <button
+          class="set-select"
+          type="button"
+          data-action="select-set"
+          aria-pressed="${selected}"
+          aria-label="${selected ? 'Remove' : 'Select'} ${escapeHtml(set.name)} ${selected ? `from comparison ${comparisonRole}` : 'for comparison'}"
+        >
+          <span class="set-card-title">
+            <span class="set-name">${escapeHtml(set.name)}</span>
+            ${comparisonRole ? `<span class="set-role" aria-label="Comparison ${comparisonRole}">${comparisonRole}</span>` : ''}
+          </span>
+          <span class="set-meta">
+            <span class="set-context">
+              <span>${set.traces.length} sample${set.traces.length === 1 ? '' : 's'}</span>
+              ${createdAt ? `<span class="set-created">${createdAt}</span>` : ''}
+            </span>
+            <span class="set-median">
+              <small>p50 elapsed</small>
+              <strong>${fmtMs(medianElapsed)}</strong>
+            </span>
+          </span>
+        </button>
+        <div class="set-card-actions">
+          <button class="set-restore" type="button" data-action="restore-set" title="Restore traces from ${escapeHtml(set.name)}">
+            ${iconMarkup('refresh', 'icon icon-button')}<span>Restore</span>
+          </button>
+          <button class="set-remove" type="button" data-action="remove-set" title="Delete set" aria-label="Delete ${escapeHtml(set.name)}">
+            ${iconMarkup('close', 'icon icon-button')}
+          </button>
         </div>
       </article>`;
     }).join('');
@@ -272,16 +283,6 @@
     focusAnalyzeButton(`Restored ${set.name}: ${set.traces.length} trace(s). Click Analyze to inspect it.`);
   }
 
-  function handleSetCardsChange(event) {
-    if (!event.target.matches('[data-action="select-set"]')) return;
-    const setId = event.target.closest('[data-set-id]')?.dataset.setId;
-    if (!setId) return;
-    selectedSetIds = event.target.checked
-      ? selectSetForComparison(selectedSetIds, setId)
-      : selectedSetIds.filter((id) => id !== setId);
-    renderMeasurementSets();
-  }
-
   function handleSetCardsClick(event) {
     const restoreButton = event.target.closest('[data-action="restore-set"]');
     if (restoreButton) {
@@ -289,16 +290,28 @@
       if (setId) restoreMeasurementSet(setId);
       return;
     }
+
     const removeButton = event.target.closest('[data-action="remove-set"]');
-    if (!removeButton) return;
-    const setId = removeButton.closest('[data-set-id]')?.dataset.setId;
+    if (removeButton) {
+      const setId = removeButton.closest('[data-set-id]')?.dataset.setId;
+      if (!setId) return;
+      const nextSets = measurementSets.filter((set) => set.id !== setId);
+      if (!persistMeasurementSets(measurementStorage, nextSets)) return;
+      measurementSets = nextSets;
+      selectedSetIds = selectedSetIds.filter((id) => id !== setId);
+      renderMeasurementSets();
+      setSetsStatus('Set deleted.');
+      return;
+    }
+
+    const selectButton = event.target.closest('[data-action="select-set"]');
+    if (!selectButton) return;
+    const setId = selectButton.closest('[data-set-id]')?.dataset.setId;
     if (!setId) return;
-    const nextSets = measurementSets.filter((set) => set.id !== setId);
-    if (!persistMeasurementSets(measurementStorage, nextSets)) return;
-    measurementSets = nextSets;
-    selectedSetIds = selectedSetIds.filter((id) => id !== setId);
+    selectedSetIds = selectedSetIds.includes(setId)
+      ? selectedSetIds.filter((id) => id !== setId)
+      : selectSetForComparison(selectedSetIds, setId);
     renderMeasurementSets();
-    setSetsStatus('Set deleted.');
   }
 
   function renderResults(rows) {
@@ -648,7 +661,6 @@
     $('setNameInput').addEventListener('keydown', (event) => {
       if (event.key === 'Enter' && !$('saveSetButton').disabled) saveCurrentSet();
     });
-    $('setCards').addEventListener('change', handleSetCardsChange);
     $('setCards').addEventListener('click', handleSetCardsClick);
     $('tracesWrapper').addEventListener('input', handleTraceInput);
     $('copyReportButton').addEventListener('click', copyTextReport);

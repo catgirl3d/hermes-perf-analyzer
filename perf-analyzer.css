@@ -149,43 +149,81 @@ button:hover { opacity: .88; }
   gap: 10px; margin-top: 18px;
 }
 .set-card {
+  display: flex; min-width: 0; overflow: hidden; flex-direction: column;
   background: var(--card); border: 1px solid var(--border);
-  border-radius: 12px; padding: 14px; transition: border-color .15s, background .15s;
+  border-radius: 12px;
+  transition: border-color .15s, background .15s;
 }
+.set-card:not(.selected):hover { border-color: rgba(var(--accent2-rgb), .34); }
 .set-card.selected {
-  background: rgba(var(--accent-rgb), .08);
-  border-color: rgba(var(--accent-rgb), .65);
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), .1), transparent 58%), var(--card);
+  border-color: rgba(var(--accent-rgb), .78);
 }
-.set-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .set-select {
-  display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1;
-  color: var(--text); font-size: 13px; font-weight: 600; cursor: pointer;
+  width: 100%; min-width: 0; padding: 14px;
+  display: grid; gap: 15px;
+  appearance: none; background: transparent; border: 0; border-radius: 11px 11px 0 0;
+  color: var(--text); text-align: left; cursor: pointer;
 }
-.set-select input { accent-color: var(--accent); }
-.set-select > span:last-child {
-  min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.set-select:focus-visible {
+  outline: 2px solid var(--accent2); outline-offset: -3px;
+}
+.set-card-title {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px; min-width: 0;
+}
+.set-name {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; font-weight: 650; line-height: 1.35;
 }
 .set-role {
-  display: inline-grid; place-items: center; flex: 0 0 22px; height: 22px;
-  border-radius: 6px; background: rgba(var(--accent-rgb), .18);
+  display: inline-grid; place-items: center; flex: 0 0 24px; height: 22px;
+  border: 1px solid rgba(var(--accent-rgb), .32); border-radius: 6px;
+  background: rgba(var(--accent-rgb), .14);
   color: var(--accent2); font: 700 11px var(--mono);
 }
-.set-card-actions { display: flex; align-items: center; gap: 3px; flex: none; }
+.set-card.selected .set-role {
+  border-color: rgba(var(--accent-rgb), .58);
+  background: rgba(var(--accent-rgb), .22);
+}
+.set-meta {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 16px; color: var(--muted); font-size: 11px;
+}
+.set-context { display: grid; gap: 3px; min-width: 0; }
+.set-created {
+  overflow: hidden; color: var(--muted); font: 9px var(--mono);
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.set-median {
+  display: grid; flex: none; justify-items: end; gap: 2px;
+}
+.set-median small {
+  color: var(--muted); font: 8px var(--mono);
+  text-transform: uppercase; letter-spacing: .07em;
+}
+.set-median strong { color: var(--accent2); font: 600 14px var(--mono); }
+.set-card-actions {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-top: auto; padding: 7px 9px;
+  border-top: 1px solid var(--border);
+  background: rgba(var(--border-rgb), .12);
+}
 .set-restore {
-  padding: 4px 7px; background: transparent; color: var(--accent2);
+  padding: 5px 7px; background: transparent; color: var(--accent2);
   border: 1px solid transparent; font-size: 10px;
 }
-.set-restore:hover { border-color: rgba(var(--accent2-rgb), .3); }
+.set-restore:hover {
+  border-color: rgba(var(--accent2-rgb), .28);
+  background: rgba(var(--accent2-rgb), .06);
+}
 .set-remove {
   padding: 4px; min-width: 26px; justify-content: center;
   background: transparent; color: var(--muted); border: 0;
 }
-.set-remove:hover { color: var(--warn); }
-.set-meta {
-  display: flex; align-items: baseline; justify-content: space-between;
-  gap: 12px; margin-top: 13px; color: var(--muted); font-size: 11px;
+.set-remove:hover {
+  background: rgba(var(--warn-rgb), .08); color: var(--warn);
 }
-.set-median { color: var(--accent2); font: 600 14px var(--mono); }
 .comparison-head { align-items: center; margin-bottom: 16px; }
 .comparison-head h2 { font-size: 15px; font-weight: 600; }
 .comparison-hint { color: var(--muted); font-size: 11px; }
