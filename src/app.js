@@ -240,7 +240,7 @@
         </button>
         <div class="set-card-actions">
           <button class="set-restore" type="button" data-action="restore-set" title="Restore traces from ${escapeHtml(set.name)}">
-            ${iconMarkup('refresh', 'icon icon-button')}<span>Restore</span>
+              <svg class="icon icon-button restore-icon" viewBox="0 0 512 512" aria-hidden="true" focusable="false"><path d="M 48,256 c -0.32,-18.16 27.15,-22.99 31.84,-2.49 c 0.86,50.5 16.42,90.18 51.5,126.65 c 103.23,102.21 274.42,44.83 298.59,-97.01 c 16.83,-111.44 -71.99,-208.98 -184.43,-202.91 c -47.31,3.47 -87.15,22.54 -119.54,57.22 c -1.85,1.88 -3.46,3.92 -4.85,6.12 c 0.57,0.5 1.24,0.59 1.98,0.25 c 22.49,-6.83 44.98,-13.66 67.47,-20.5 c 19.14,-4.12 28.12,21.34 10.42,30.13 c -29.82,9.18 -59.66,18.27 -89.53,27.28 c -17.14,4.6 -33.36,-7.51 -33.87,-25.23 c -0.48,-31.01 -0.76,-62.01 -0.86,-93.01 c 1.32,-18.38 29.79,-20.36 31.85,1.2 c 0.25,14.28 0.4,28.56 0.43,42.84 c -0.02,0.51 0.16,0.92 0.54,1.22 c 5.28,-4.62 10.61,-9.22 15.99,-13.77 c 133.85,-107.03 328.81,-16.8 338.32,152.51 c 4.44,123.31 -94.01,221.94 -217.35,217.35 c -112.11,-6.36 -197.62,-95.39 -198.5,-207.85 Z"/></svg><span>Restore</span>
           </button>
           <button class="set-remove" type="button" data-action="remove-set" title="Delete set" aria-label="Delete ${escapeHtml(set.name)}">
             ${iconMarkup('close', 'icon icon-button')}

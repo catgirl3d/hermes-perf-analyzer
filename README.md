@@ -63,6 +63,7 @@ When two sets are selected, the app also generates a separate **Shareable compar
 ## What It Shows
 
 - `elapsedMs`, `resume-rpc`, `cold-view-published`, paint wait
+- production renderer scheduling from cold publish through runtime render, passive adapter sync, and thread layout commit
 - `p50 / p90 / p95 / min / max` aggregates
 - backend / transport breakdown when present in the trace
 - per-sample cards

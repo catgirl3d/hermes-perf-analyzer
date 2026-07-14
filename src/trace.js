@@ -53,6 +53,7 @@
     const preRepoBuilt = format === 'new' ? stageFirst(preRpcStages, 'runtime-message-repository-built') || {} : {};
     const preAdapterSync = format === 'new' ? stageFirst(preRpcStages, 'runtime-adapter-synced') || {} : {};
     const postRepoBuilt = stagesAll(postRpcStages, 'runtime-message-repository-built')[0] || {};
+    const postRuntimeLayout = stagesAll(postRpcStages, 'runtime-boundary-layout-commit')[0] || {};
     const postAdapter = stagesAll(postRpcStages, 'runtime-adapter-synced')[0] || {};
     const transcriptStage = stageFirst(postRpcStages, 'transcript-transformed') || {};
     const coldViewAt = (stageFirst(stages, 'cold-view-published') || {}).atMs;
@@ -62,8 +63,12 @@
     const threadLayoutAfterPaint = stages.filter(
       (stage) => stage.name === 'thread-message-list-layout-commit' && stage.atMs > (paintWaitAt || 0),
     );
-    const paintWaitDur = threadLayoutAfterPaint.length && !isNaN(paintWaitAt)
-      ? threadLayoutAfterPaint[0].atMs - paintWaitAt
+    const threadLayoutAfterAdapter = threadLayoutAfterPaint.filter(
+      (stage) => !Number.isFinite(postAdapter.atMs) || stage.atMs > postAdapter.atMs,
+    );
+    const postThreadLayout = threadLayoutAfterAdapter[0] || threadLayoutAfterPaint[0] || {};
+    const paintWaitDur = Number.isFinite(postThreadLayout.atMs) && !isNaN(paintWaitAt)
+      ? postThreadLayout.atMs - paintWaitAt
       : NaN;
     const resumeResponseSent = stageFirst(stages, 'resume-response-sent') || {};
     const readBackend = (key) => rpcFinished[key] ?? NaN;
@@ -119,7 +124,12 @@
       preRepoBuiltAt: preRepoBuilt.atMs,
       preAdapterAt: preAdapterSync.atMs,
       postRepoBuiltAt: postRepoBuilt.atMs,
+      coldViewToRuntimeRenderMs: postRuntimeLayout.coldViewPublishToRenderStartMs,
+      runtimeRenderToLayoutMs: postRuntimeLayout.renderToLayoutCommitMs,
+      runtimeLayoutToAdapterSyncMs: postAdapter.layoutCommitToSyncStartMs,
       postAdapterAt: postAdapter.atMs,
+      adapterSyncToThreadRenderMs: postThreadLayout.runtimeSyncToRenderStartMs,
+      threadRenderToLayoutMs: postThreadLayout.renderToLayoutCommitMs,
       transcriptMs: transcriptStage.sincePreviousStageMs,
       coldViewAt,
       paintWaitAt,

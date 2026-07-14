@@ -11,6 +11,14 @@
     summarizePercentiles,
   } = stats;
 
+  const RENDERER_METRICS = [
+    { key: 'coldViewToRuntimeRenderMs', label: 'Cold publish → runtime render', desc: 'React scheduling before the runtime boundary starts rendering' },
+    { key: 'runtimeRenderToLayoutMs', label: 'Runtime render → layout commit', desc: 'Runtime boundary render, descendants, and DOM commit' },
+    { key: 'runtimeLayoutToAdapterSyncMs', label: 'Runtime layout → adapter sync', desc: 'Wait from layout commit until the passive adapter effect starts' },
+    { key: 'adapterSyncToThreadRenderMs', label: 'Adapter sync → thread render', desc: 'React scheduling after assistant-ui subscribers are notified' },
+    { key: 'threadRenderToLayoutMs', label: 'Thread render → layout commit', desc: 'Visible thread subtree render and DOM commit' },
+  ];
+
   const GROUPS = [
     {
       icon: 'timer',
@@ -47,6 +55,11 @@
         { key: 'transcriptMs', label: 'transcript-transformed · Δ', desc: 'toRuntimeMessage pass (new: <1ms delta)' },
         { key: 'coldViewAt', label: 'cold-view-published · atMs', desc: 'View ready for paint scheduling' },
       ],
+    },
+    {
+      icon: 'brush',
+      label: 'Renderer scheduling',
+      metrics: RENDERER_METRICS,
     },
     {
       icon: 'brush',
@@ -116,7 +129,7 @@
       distribution: 'latency',
       fields: [
         { key: 'clientReqAckMs', traceKey: 'clientRequestReceiveAckMs', label: 'Client → ACK', desc: 'Time until client received RPC ack' },
-        { key: 'clientReqAckTransportMs', traceKey: 'clientRequestReceiveAckTransportMs', label: 'Client → ACK transport', desc: 'ACK wait excluding renderer event queue' },
+        { key: 'clientReqAckTransportMs', traceKey: 'clientRequestReceiveAckTransportMs', label: 'Client → ACK excl. queue', desc: 'Composite send, backend pre-ACK, and IPC wait; not pure wire transport' },
         { key: 'clientAckEventQueueMs', traceKey: 'clientReceiveAckEventQueueMs', label: 'ACK event queue', desc: 'Renderer queue before ACK callback' },
         { key: 'clientAckToRespMs', traceKey: 'clientReceiveAckToResponseMs', label: 'ACK → response', desc: 'Time from ACK to full response received' },
         { key: 'clientMessageQueueMs', traceKey: 'clientMessageEventQueueMs', label: 'Response event queue', desc: 'Renderer queue before response callback' },
@@ -153,6 +166,11 @@
     { label: 'Profile ready at', key: 'profileAt' },
     { label: 'Resume RPC', key: 'rpcDurationMs' },
     { label: 'Cold view published at', key: 'coldViewAt' },
+    { label: 'Cold publish → runtime render', key: 'coldViewToRuntimeRenderMs' },
+    { label: 'Runtime render → layout', key: 'runtimeRenderToLayoutMs' },
+    { label: 'Runtime layout → adapter sync', key: 'runtimeLayoutToAdapterSyncMs' },
+    { label: 'Adapter sync → thread render', key: 'adapterSyncToThreadRenderMs' },
+    { label: 'Thread render → layout', key: 'threadRenderToLayoutMs' },
     { label: 'Paint wait', key: 'raf2WaitMs' },
     { label: 'Backend handler', subKey: 'handlerMs' },
     { label: 'DB open', subKey: 'dbOpenMs' },
@@ -297,19 +315,30 @@
       .join(', ') || 'legacy';
     const activeBuildSamples = rows.filter((row) => row.backend.agentBuildActiveCount > 0).length;
     const backendContexts = buildBackendContextLabels(rows).join(' | ') || 'none';
+    const rendererSamples = rows.filter((row) =>
+      RENDERER_METRICS.some((metric) => Number.isFinite(row[metric.key])),
+    ).length;
     const lines = [
       'HERMES COLD-RESUME PERFORMANCE REPORT',
       `samples: ${rows.length} | timing: ${timingVersions} | active-build samples: ${activeBuildSamples}/${rows.length}`,
       `backend context: ${backendContexts}`,
+      `analyzer: renderer-breakdown-v1 | renderer-field samples: ${rendererSamples}/${rows.length}`,
       '',
       'SUMMARY',
       reportStat('Total elapsed', computeStats(rows, 'elapsedMs')),
       reportStat('Resume RPC', computeStats(rows, 'rpcDurationMs')),
       reportStat('Cold view published at', computeStats(rows, 'coldViewAt')),
       reportStat('Paint wait', computeStats(rows, 'raf2WaitMs')),
-      '',
-      'BACKEND / TRANSPORT',
     ].filter((line) => line !== null);
+
+    const rendererLines = RENDERER_METRICS
+      .map((metric) => reportStat(metric.label, computeStats(rows, metric.key)))
+      .filter(Boolean);
+
+    lines.push('', 'RENDERER SCHEDULING');
+    lines.push(...(rendererLines.length > 0 ? rendererLines : ['Renderer fields unavailable in supplied traces']));
+
+    lines.push('', 'BACKEND / TRANSPORT');
 
     BACKEND_FIELDS.forEach((field) => {
       const line = reportStat(field.label, computeStats(rows, null, field.key), field.unit);

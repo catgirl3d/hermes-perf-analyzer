@@ -217,6 +217,10 @@ button:hover { opacity: .88; }
   border-color: rgba(var(--accent2-rgb), .28);
   background: rgba(var(--accent2-rgb), .06);
 }
+.restore-icon {
+  fill: currentColor;
+  stroke: none;
+}
 .set-remove {
   padding: 4px; min-width: 26px; justify-content: center;
   background: transparent; color: var(--muted); border: 0;
