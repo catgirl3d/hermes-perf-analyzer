@@ -54,6 +54,7 @@
     const preAdapterSync = format === 'new' ? stageFirst(preRpcStages, 'runtime-adapter-synced') || {} : {};
     const postRepoBuilt = stagesAll(postRpcStages, 'runtime-message-repository-built')[0] || {};
     const postRuntimeLayout = stagesAll(postRpcStages, 'runtime-boundary-layout-commit')[0] || {};
+    const postAdapterStart = stagesAll(postRpcStages, 'runtime-adapter-sync-started')[0] || {};
     const postAdapter = stagesAll(postRpcStages, 'runtime-adapter-synced')[0] || {};
     const transcriptStage = stageFirst(postRpcStages, 'transcript-transformed') || {};
     const coldViewAt = (stageFirst(stages, 'cold-view-published') || {}).atMs;
@@ -115,6 +116,7 @@
     return {
       _format: format,
       _hasBackend: !isNaN(backend.handlerMs),
+      _rendererSelectionVersion: 3,
       elapsedMs,
       profileAt,
       rpcStartAt,
@@ -127,8 +129,11 @@
       coldViewToRuntimeRenderMs: postRuntimeLayout.coldViewPublishToRenderStartMs,
       runtimeRenderToLayoutMs: postRuntimeLayout.renderToLayoutCommitMs,
       runtimeLayoutToAdapterSyncMs: postAdapter.layoutCommitToSyncStartMs,
+      runtimeAdapterOperationMs: postAdapter.operationDurationMs,
+      postAdapterStartAt: postAdapterStart.atMs,
       postAdapterAt: postAdapter.atMs,
-      adapterSyncToThreadRenderMs: postThreadLayout.runtimeSyncToRenderStartMs,
+      adapterSyncToThreadRenderMs:
+        postThreadLayout.runtimeSyncStartToRenderStartMs ?? postThreadLayout.runtimeSyncToRenderStartMs,
       threadRenderToLayoutMs: postThreadLayout.renderToLayoutCommitMs,
       transcriptMs: transcriptStage.sincePreviousStageMs,
       coldViewAt,

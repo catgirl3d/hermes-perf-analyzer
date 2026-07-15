@@ -15,7 +15,8 @@
     { key: 'coldViewToRuntimeRenderMs', label: 'Cold publish → runtime render', desc: 'React scheduling before the runtime boundary starts rendering' },
     { key: 'runtimeRenderToLayoutMs', label: 'Runtime render → layout commit', desc: 'Runtime boundary render, descendants, and DOM commit' },
     { key: 'runtimeLayoutToAdapterSyncMs', label: 'Runtime layout → adapter sync', desc: 'Wait from layout commit until the passive adapter effect starts' },
-    { key: 'adapterSyncToThreadRenderMs', label: 'Adapter sync → thread render', desc: 'React scheduling after assistant-ui subscribers are notified' },
+    { key: 'runtimeAdapterOperationMs', label: 'Runtime adapter operation', desc: 'Adapter repository update and synchronous subscriber notification' },
+    { key: 'adapterSyncToThreadRenderMs', label: 'Adapter sync start → thread render', desc: 'Delay from pre-notification sync boundary to the committed Thread render' },
     { key: 'threadRenderToLayoutMs', label: 'Thread render → layout commit', desc: 'Visible thread subtree render and DOM commit' },
   ];
 
@@ -318,11 +319,15 @@
     const rendererSamples = rows.filter((row) =>
       RENDERER_METRICS.some((metric) => Number.isFinite(row[metric.key])),
     ).length;
+    const rendererSelectorVersions = [...new Set(rows.map((row) => row._rendererSelectionVersion).filter(Number.isFinite))];
+    const rendererSelector = rendererSelectorVersions.length === 1
+      ? `post-adapter-v${rendererSelectorVersions[0]}`
+      : rendererSelectorVersions.length > 1 ? 'mixed' : 'legacy';
     const lines = [
       'HERMES COLD-RESUME PERFORMANCE REPORT',
       `samples: ${rows.length} | timing: ${timingVersions} | active-build samples: ${activeBuildSamples}/${rows.length}`,
       `backend context: ${backendContexts}`,
-      `analyzer: renderer-breakdown-v1 | renderer-field samples: ${rendererSamples}/${rows.length}`,
+      `analyzer: renderer-breakdown-v3 | selector: ${rendererSelector} | renderer-field samples: ${rendererSamples}/${rows.length}`,
       '',
       'SUMMARY',
       reportStat('Total elapsed', computeStats(rows, 'elapsedMs')),

@@ -8,6 +8,7 @@ const {
   classifyRelativeValue,
   classifyTailImpact,
   buildComparisonTextReport,
+  buildTextReport,
   buildBackendContextLabels,
   describeSampleConfidence,
   createMeasurementSetsExport,
@@ -95,8 +96,36 @@ test('normalizes a raw stages array before extraction', () => {
   const row = extract(normalized);
 
   assert.equal(normalized.outcome, 'cold-resumed');
+  assert.equal(row._rendererSelectionVersion, 3);
   assert.equal(row.elapsedMs, 200);
   assert.equal(row.rpcDurationMs, 60);
+  assert.match(buildTextReport([row]), /analyzer: renderer-breakdown-v3 \| selector: post-adapter-v3/);
+});
+
+test('selects the first thread commit after the post-RPC adapter sync', () => {
+  const row = extract(normalizeTrace([
+    { name: 'resume-rpc-start', atMs: 50 },
+    { name: 'resume-rpc-finished', atMs: 100, sincePreviousStageMs: 50 },
+    { name: 'paint-wait-start', atMs: 101 },
+    { name: 'runtime-boundary-layout-commit', atMs: 150, renderToLayoutCommitMs: 40 },
+    {
+      name: 'thread-message-list-layout-commit',
+      atMs: 149,
+      renderToLayoutCommitMs: 39,
+      runtimeSyncToRenderStartMs: 70,
+    },
+    { name: 'runtime-adapter-synced', atMs: 151, layoutCommitToSyncStartMs: 0 },
+    {
+      name: 'thread-message-list-layout-commit',
+      atMs: 190,
+      renderToLayoutCommitMs: 20,
+      runtimeSyncStartToRenderStartMs: 19,
+    },
+  ]));
+
+  assert.equal(row.adapterSyncToThreadRenderMs, 19);
+  assert.equal(row.threadRenderToLayoutMs, 20);
+  assert.equal(row.paintWaitDur, 89);
 });
 
 test('extracts timing v9 and prewarm metadata from a raw stages array', () => {
