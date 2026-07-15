@@ -68,6 +68,12 @@
       (stage) => !Number.isFinite(postAdapter.atMs) || stage.atMs > postAdapter.atMs,
     );
     const postThreadLayout = threadLayoutAfterAdapter[0] || threadLayoutAfterPaint[0] || {};
+    const postUserMessage = stages.find(
+      (stage) => stage.name === 'user-message-layout-commit' && stage.atMs > (postAdapterStart.atMs || 0),
+    ) || {};
+    const postAssistantMessage = stages.find(
+      (stage) => stage.name === 'assistant-message-layout-commit' && stage.atMs > (postAdapterStart.atMs || 0),
+    ) || {};
     const paintWaitDur = Number.isFinite(postThreadLayout.atMs) && !isNaN(paintWaitAt)
       ? postThreadLayout.atMs - paintWaitAt
       : NaN;
@@ -116,7 +122,7 @@
     return {
       _format: format,
       _hasBackend: !isNaN(backend.handlerMs),
-      _rendererSelectionVersion: 3,
+      _rendererSelectionVersion: 5,
       elapsedMs,
       profileAt,
       rpcStartAt,
@@ -134,7 +140,21 @@
       postAdapterAt: postAdapter.atMs,
       adapterSyncToThreadRenderMs:
         postThreadLayout.runtimeSyncStartToRenderStartMs ?? postThreadLayout.runtimeSyncToRenderStartMs,
+      threadRenderBodyMs: postThreadLayout.renderBodyDurationMs,
+      threadAfterBodyToInsertionMs:
+        Number.isFinite(postThreadLayout.renderToInsertionCommitMs) && Number.isFinite(postThreadLayout.renderBodyDurationMs)
+          ? Math.max(0, postThreadLayout.renderToInsertionCommitMs - postThreadLayout.renderBodyDurationMs)
+          : NaN,
+      threadInsertionToLayoutMs: postThreadLayout.insertionCommitToLayoutMs,
       threadRenderToLayoutMs: postThreadLayout.renderToLayoutCommitMs,
+      userMessageRenderBodyMs: postUserMessage.renderBodyDurationMs,
+      assistantMessageRenderBodyMs: postAssistantMessage.renderBodyDurationMs,
+      assistantMessageAfterBodyToInsertionMs:
+        Number.isFinite(postAssistantMessage.renderToInsertionCommitMs) && Number.isFinite(postAssistantMessage.renderBodyDurationMs)
+          ? Math.max(0, postAssistantMessage.renderToInsertionCommitMs - postAssistantMessage.renderBodyDurationMs)
+          : NaN,
+      assistantMessageInsertionToLayoutMs: postAssistantMessage.insertionCommitToLayoutMs,
+      assistantMessageRenderToLayoutMs: postAssistantMessage.renderToLayoutCommitMs,
       transcriptMs: transcriptStage.sincePreviousStageMs,
       coldViewAt,
       paintWaitAt,

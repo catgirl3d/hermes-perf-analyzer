@@ -51,6 +51,7 @@
   let selectedSetIds = [];
   let measurementStorage = null;
   let pendingSetRemoval = null;
+  let backendImpactFilter = 'all';
 
   const SAMPLE_METRICS = [
     { key: 'elapsedMs', label: 'Elapsed', read: (row) => row.elapsedMs, primary: true },
@@ -86,6 +87,24 @@
       comparison,
       markup: `<span class="sc-metric-value sc-relative-${comparison.key}" title="${title}">${fmt(value)} ms</span>`,
     };
+  }
+
+  function filterBackendGroups(groups, impactFilter) {
+    if (impactFilter !== 'significant') return groups;
+    return groups
+      .map((group) => ({
+        ...group,
+        metrics: group.metrics.filter((metric) => metric.presentation.impact?.key === 'significant'),
+      }))
+      .filter((group) => group.metrics.length > 0);
+  }
+
+  function renderBackendImpactFilter() {
+    $('backendImpactFilters').querySelectorAll('[data-backend-impact-filter]').forEach((button) => {
+      const isActive = button.dataset.backendImpactFilter === backendImpactFilter;
+      button.classList.toggle('is-active', isActive);
+      button.setAttribute('aria-pressed', String(isActive));
+    });
   }
 
   function copyTextReport() {
@@ -326,6 +345,14 @@
     }
   }
 
+  function handleBackendImpactFilterClick(event) {
+    const button = event.target.closest('[data-backend-impact-filter]');
+    const filter = button?.dataset.backendImpactFilter;
+    if (!button || !['all', 'significant'].includes(filter) || filter === backendImpactFilter) return;
+    backendImpactFilter = filter;
+    renderResults(currentTraces.map(extract));
+  }
+
   function handleSetCardsClick(event) {
     const restoreButton = event.target.closest('[data-action="restore-set"]');
     if (restoreButton) {
@@ -437,7 +464,10 @@
       $('backendContext').innerHTML = buildBackendContextLabels(backendRows)
         .map((label) => `<span class="backend-context-chip">${escapeHtml(label)}</span>`)
         .join('');
-      $('backendGrid').innerHTML = buildBackendGroups(rows).map((group) => `
+      const backendGroups = filterBackendGroups(buildBackendGroups(rows), backendImpactFilter);
+      renderBackendImpactFilter();
+      $('backendFilterEmpty').hidden = backendGroups.length > 0;
+      $('backendGrid').innerHTML = backendGroups.map((group) => `
         <section class="backend-group backend-group-${group.id}">
           <div class="backend-group-head">
             <div>
@@ -515,6 +545,8 @@
     } else {
       backendSection.style.display = 'none';
       $('backendContext').innerHTML = '';
+      $('backendFilterEmpty').hidden = true;
+      $('backendGrid').innerHTML = '';
     }
 
     lastTextReport = buildTextReport(rows);
@@ -702,6 +734,7 @@
       if (event.key === 'Enter' && !$('saveSetButton').disabled) saveCurrentSet();
     });
     $('setCards').addEventListener('click', handleSetCardsClick);
+    $('backendImpactFilters').addEventListener('click', handleBackendImpactFilterClick);
     $('cancelRemoveSetButton').addEventListener('click', () => closeMeasurementSetRemovalDialog());
     $('confirmRemoveSetButton').addEventListener('click', confirmMeasurementSetRemoval);
     $('removeSetDialog').addEventListener('click', handleRemoveSetDialogClick);
@@ -714,7 +747,7 @@
     renderMeasurementSets();
   }
 
-  const appModule = { getMeasurementSetRemovalCopy, init };
+  const appModule = { filterBackendGroups, getMeasurementSetRemovalCopy, init };
   Object.assign(HermesPerfAnalyzer, appModule);
 
   if (typeof document !== 'undefined') {

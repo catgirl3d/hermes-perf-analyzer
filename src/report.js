@@ -17,7 +17,15 @@
     { key: 'runtimeLayoutToAdapterSyncMs', label: 'Runtime layout → adapter sync', desc: 'Wait from layout commit until the passive adapter effect starts' },
     { key: 'runtimeAdapterOperationMs', label: 'Runtime adapter operation', desc: 'Adapter repository update and synchronous subscriber notification' },
     { key: 'adapterSyncToThreadRenderMs', label: 'Adapter sync start → thread render', desc: 'Delay from pre-notification sync boundary to the committed Thread render' },
+    { key: 'threadRenderBodyMs', label: 'Thread list render body', desc: 'Synchronous work owned by the ThreadMessageList function' },
+    { key: 'threadAfterBodyToInsertionMs', label: 'Thread descendants → insertion', desc: 'Descendant reconciliation and scheduler time after the list function returns' },
+    { key: 'threadInsertionToLayoutMs', label: 'Thread insertion → layout', desc: 'Commit-phase work between insertion and layout effects' },
     { key: 'threadRenderToLayoutMs', label: 'Thread render → layout commit', desc: 'Visible thread subtree render and DOM commit' },
+    { key: 'userMessageRenderBodyMs', label: 'User message render body', desc: 'Synchronous work owned by the visible UserMessage function' },
+    { key: 'assistantMessageRenderBodyMs', label: 'Assistant message render body', desc: 'Synchronous work owned by the visible AssistantMessage function' },
+    { key: 'assistantMessageAfterBodyToInsertionMs', label: 'Assistant descendants → insertion', desc: 'Assistant parts, Markdown reconciliation, and scheduling after its function returns' },
+    { key: 'assistantMessageInsertionToLayoutMs', label: 'Assistant insertion → layout', desc: 'Assistant subtree commit work before its layout effect' },
+    { key: 'assistantMessageRenderToLayoutMs', label: 'Assistant render → layout', desc: 'Total visible AssistantMessage subtree render and commit span' },
   ];
 
   const GROUPS = [
@@ -327,7 +335,7 @@
       'HERMES COLD-RESUME PERFORMANCE REPORT',
       `samples: ${rows.length} | timing: ${timingVersions} | active-build samples: ${activeBuildSamples}/${rows.length}`,
       `backend context: ${backendContexts}`,
-      `analyzer: renderer-breakdown-v3 | selector: ${rendererSelector} | renderer-field samples: ${rendererSamples}/${rows.length}`,
+      `analyzer: renderer-breakdown-v5 | selector: ${rendererSelector} | renderer-field samples: ${rendererSamples}/${rows.length}`,
       '',
       'SUMMARY',
       reportStat('Total elapsed', computeStats(rows, 'elapsedMs')),

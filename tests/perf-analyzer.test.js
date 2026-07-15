@@ -24,7 +24,7 @@ const {
   serializeSetTracesForInputs,
   shouldAppendTrailingTrace,
 } = require('../src/index.js');
-const { getMeasurementSetRemovalCopy } = require('../src/app.js');
+const { filterBackendGroups, getMeasurementSetRemovalCopy } = require('../src/app.js');
 
 function trace(elapsedMs, rpcDurationMs) {
   return {
@@ -62,6 +62,30 @@ test('labels custom removal confirmation with the selected set name', () => {
   assert.equal(getMeasurementSetRemovalCopy({ name: 'Set A' }), 'Delete "Set A"?');
 });
 
+test('filters backend groups to metrics with significant tails', () => {
+  const groups = [
+    {
+      id: 'critical',
+      metrics: [
+        { key: 'handlerMs', presentation: { impact: { key: 'significant' } } },
+        { key: 'outsideHandlerMs', presentation: { impact: { key: 'moderate' } } },
+      ],
+    },
+    {
+      id: 'state',
+      metrics: [{ key: 'agentBuildActiveCount', presentation: { impact: null } }],
+    },
+  ];
+
+  assert.equal(filterBackendGroups(groups, 'all'), groups);
+  assert.deepEqual(filterBackendGroups(groups, 'significant'), [
+    {
+      id: 'critical',
+      metrics: [{ key: 'handlerMs', presentation: { impact: { key: 'significant' } } }],
+    },
+  ]);
+});
+
 test('comparison uses p50 and calculates B relative to A', () => {
   const rowsA = [trace(100, 50), trace(120, 70)].map(normalizeTrace).map(extract);
   const rowsB = [trace(80, 40), trace(100, 50)].map(normalizeTrace).map(extract);
@@ -96,10 +120,10 @@ test('normalizes a raw stages array before extraction', () => {
   const row = extract(normalized);
 
   assert.equal(normalized.outcome, 'cold-resumed');
-  assert.equal(row._rendererSelectionVersion, 3);
+  assert.equal(row._rendererSelectionVersion, 5);
   assert.equal(row.elapsedMs, 200);
   assert.equal(row.rpcDurationMs, 60);
-  assert.match(buildTextReport([row]), /analyzer: renderer-breakdown-v3 \| selector: post-adapter-v3/);
+  assert.match(buildTextReport([row]), /analyzer: renderer-breakdown-v5 \| selector: post-adapter-v5/);
 });
 
 test('selects the first thread commit after the post-RPC adapter sync', () => {
@@ -116,15 +140,42 @@ test('selects the first thread commit after the post-RPC adapter sync', () => {
     },
     { name: 'runtime-adapter-synced', atMs: 151, layoutCommitToSyncStartMs: 0 },
     {
+      name: 'user-message-layout-commit',
+      atMs: 184,
+      renderBodyDurationMs: 1,
+      renderToInsertionCommitMs: 10,
+      insertionCommitToLayoutMs: 3,
+      renderToLayoutCommitMs: 13,
+    },
+    {
+      name: 'assistant-message-layout-commit',
+      atMs: 188,
+      renderBodyDurationMs: 2,
+      renderToInsertionCommitMs: 14,
+      insertionCommitToLayoutMs: 4,
+      renderToLayoutCommitMs: 18,
+    },
+    {
       name: 'thread-message-list-layout-commit',
       atMs: 190,
+      insertionCommitToLayoutMs: 5,
+      renderBodyDurationMs: 2,
+      renderToInsertionCommitMs: 15,
       renderToLayoutCommitMs: 20,
       runtimeSyncStartToRenderStartMs: 19,
     },
   ]));
 
   assert.equal(row.adapterSyncToThreadRenderMs, 19);
+  assert.equal(row.threadRenderBodyMs, 2);
+  assert.equal(row.threadAfterBodyToInsertionMs, 13);
+  assert.equal(row.threadInsertionToLayoutMs, 5);
   assert.equal(row.threadRenderToLayoutMs, 20);
+  assert.equal(row.userMessageRenderBodyMs, 1);
+  assert.equal(row.assistantMessageRenderBodyMs, 2);
+  assert.equal(row.assistantMessageAfterBodyToInsertionMs, 12);
+  assert.equal(row.assistantMessageInsertionToLayoutMs, 4);
+  assert.equal(row.assistantMessageRenderToLayoutMs, 18);
   assert.equal(row.paintWaitDur, 89);
 });
 
