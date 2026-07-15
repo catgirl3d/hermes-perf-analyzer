@@ -62,13 +62,18 @@ When two sets are selected, the app also generates a separate **Shareable compar
 
 ## What It Shows
 
-- `elapsedMs`, `resume-rpc`, `cold-view-published`, paint wait
+- `elapsedMs`, `resume-rpc`, `cold-view-published`, and the double-RAF completion wait
 - production renderer scheduling from cold publish through runtime render, passive adapter sync, and thread layout commit
+- a linked renderer selector that chooses the dominant post-adapter Markdown event and matches its Assistant shell by `messageId`
+- selected renderer timestamps plus adapter → Markdown → RAF intervals for locating per-sample gaps
 - `p50 / p90 / p95 / min / max` aggregates
 - backend / transport breakdown when present in the trace
 - per-sample cards
 - persistent named measurement sets and A/B median deltas
 - shareable aggregate report with copy/save actions
+- section controls for including or excluding summary, renderer, RAF, backend, and per-sample details from the shareable report
 - separate LLM-ready A/B comparison report
 
 For backend cards, `p50` is the typical value and `p90` is the slow tail. `tail = p90 - p50`: a small green tail indicates stable timings, while a large red tail indicates high variability. The sample badge shows `few samples` when there are fewer than 10 backend samples and `enough samples` otherwise.
+
+Aggregate metric percentiles are independent distributions and are not additive. The double-RAF marker confirms that two animation-frame callbacks ran; it is not a direct browser pixel-paint timestamp.

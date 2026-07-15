@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Hermes Perf Analyzer</title>
-<link rel="stylesheet" href="./perf-analyzer.css?v=renderer-breakdown-v5" />
+<link rel="stylesheet" href="./perf-analyzer.css?v=comparison-overall-v1" />
 </head>
 <body>
 
@@ -134,6 +134,7 @@
       </div>
       <span class="comparison-hint">Negative delta means B is faster</span>
     </div>
+    <div class="comparison-outcome" id="comparisonOutcome" aria-live="polite"></div>
     <div class="table-wrap">
       <table>
         <thead>
@@ -173,26 +174,78 @@
 
     <div class="summary-pills" id="summaryPills"></div>
 
+    <section class="timeline-section" id="timelineSection" aria-labelledby="timelineTitle">
+      <div class="timeline-head">
+        <div>
+          <h3 id="timelineTitle">Session timeline</h3>
+          <p>Exact non-overlapping milestone intervals for one sample.</p>
+        </div>
+        <div class="timeline-navigation" aria-label="Timeline sample navigation">
+          <button class="timeline-nav-button" id="timelinePrevButton" type="button" aria-label="Previous sample">‹</button>
+          <span class="timeline-sample-label" id="timelineSampleLabel"></span>
+          <button class="timeline-nav-button" id="timelineNextButton" type="button" aria-label="Next sample">›</button>
+        </div>
+      </div>
+      <div class="timeline-meta" id="timelineMeta"></div>
+      <div class="timeline-key" aria-label="Timeline legend">
+        <span><i class="timeline-key-swatch phase" aria-hidden="true"></i>Measured phase</span>
+        <span><i class="timeline-key-swatch gap" aria-hidden="true"></i>Uninstrumented gap</span>
+        <span><i class="timeline-key-swatch selected" aria-hidden="true"></i>Selected interval</span>
+      </div>
+      <div class="timeline-axis" aria-hidden="true">
+        <span>0 ms</span>
+        <span id="timelineTotalLabel"></span>
+      </div>
+      <div class="timeline-rail" id="timelineRail" aria-label="Selected sample milestone timeline"></div>
+      <div class="timeline-detail" id="timelineDetail" aria-live="polite"></div>
+      <div class="timeline-notices" id="timelineNotices"></div>
+    </section>
+
+    <!-- per-sample cards -->
+    <section class="analysis-section samples-section" aria-labelledby="samplesTitle">
+      <div class="samples-head">
+        <div>
+          <h3 id="samplesTitle">Per-sample overview</h3>
+          <p>Each timing is compared with the median of the same metric. Highlighting starts at 3 samples.</p>
+        </div>
+        <div class="sample-legend" aria-label="Relative timing legend">
+          <span><i class="legend-dot fast"></i>faster</span>
+          <span><i class="legend-dot slow"></i>slower</span>
+          <span><i class="legend-dot outlier"></i>outlier</span>
+        </div>
+      </div>
+      <div class="sample-cards" id="sampleCards"></div>
+    </section>
+
     <!-- main stats table -->
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Stage / Metric</th>
-            <th>Description</th>
-            <th>Median (ms)</th>
-            <th>p90 (ms)</th>
-            <th>Min</th>
-            <th>Max</th>
-            <th style="min-width:140px">Bars (med · p90)</th>
-          </tr>
-        </thead>
-        <tbody id="statsBody"></tbody>
-      </table>
-    </div>
+    <section class="analysis-section metrics-section" aria-labelledby="metricsTitle">
+      <div class="analysis-section-head">
+        <div>
+          <h3 id="metricsTitle">Aggregate metrics</h3>
+          <p>Distribution across all parsed samples, with percentile bars for quick tail comparison.</p>
+        </div>
+        <span class="analysis-section-tag">p50 · p90</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Stage / Metric</th>
+              <th>Description</th>
+              <th>Median (ms)</th>
+              <th>p90 (ms)</th>
+              <th>Min</th>
+              <th>Max</th>
+              <th style="min-width:140px">Bars (med · p90)</th>
+            </tr>
+          </thead>
+          <tbody id="statsBody"></tbody>
+        </table>
+      </div>
+    </section>
 
     <!-- backend breakdown (new format only) -->
-    <div class="breakdown-section" id="backendBreakdown" style="display:none">
+    <section class="analysis-section breakdown-section" id="backendBreakdown" style="display:none">
       <div class="breakdown-title">
         <div>
           <h3>Resume RPC diagnostics</h3>
@@ -210,7 +263,7 @@
       <div class="backend-context" id="backendContext"></div>
       <p class="backend-filter-empty" id="backendFilterEmpty" hidden>No significant p90 tails in these samples.</p>
       <div class="backend-groups" id="backendGrid"></div>
-    </div>
+    </section>
 
     <!-- plain-text report for sharing -->
     <div class="report-section">
@@ -224,24 +277,20 @@
           <button class="btn-report secondary" id="downloadReportButton" type="button">Save .txt</button>
         </div>
       </div>
+      <div class="report-options" id="reportSectionFilters" role="group" aria-labelledby="reportOptionsLabel">
+        <span class="report-options-label" id="reportOptionsLabel">Include in report</span>
+        <div class="report-options-list">
+          <label class="report-option"><input type="checkbox" data-report-section="summary" checked /><span>Summary</span></label>
+          <label class="report-option"><input type="checkbox" data-report-section="renderer" checked /><span>Renderer</span></label>
+          <label class="report-option"><input type="checkbox" data-report-section="raf" checked /><span>RAF / Frames</span></label>
+          <label class="report-option"><input type="checkbox" data-report-section="backend" checked /><span>Backend</span></label>
+          <label class="report-option"><input type="checkbox" data-report-section="samples" checked /><span>Samples</span></label>
+        </div>
+        <span class="report-options-count" id="reportSectionCount" aria-live="polite">5/5</span>
+      </div>
       <pre class="report-output" id="textReportOutput" tabindex="0"></pre>
     </div>
 
-    <!-- per-sample cards -->
-    <div class="samples-section">
-      <div class="samples-head">
-        <div>
-          <h3>Per-sample overview</h3>
-          <p>Each timing is compared with the median of the same metric. Highlighting starts at 3 samples.</p>
-        </div>
-        <div class="sample-legend" aria-label="Relative timing legend">
-          <span><i class="legend-dot fast"></i>faster</span>
-          <span><i class="legend-dot slow"></i>slower</span>
-          <span><i class="legend-dot outlier"></i>outlier</span>
-        </div>
-      </div>
-      <div class="sample-cards" id="sampleCards"></div>
-    </div>
   </section>
 
 </div>
@@ -258,12 +307,13 @@
   </section>
 </div>
 
-<script src="./samples/example-traces.js?v=renderer-breakdown-v5" defer></script>
-<script src="./src/trace.js?v=renderer-breakdown-v5" defer></script>
-<script src="./src/stats.js?v=renderer-breakdown-v5" defer></script>
-<script src="./src/report.js?v=renderer-breakdown-v5" defer></script>
-<script src="./src/measurement-sets.js?v=renderer-breakdown-v5" defer></script>
-<script src="./src/ui.js?v=renderer-breakdown-v5" defer></script>
-<script src="./src/app.js?v=renderer-breakdown-v5" defer></script>
+<script src="./samples/example-traces.js?v=report-sections-v10" defer></script>
+<script src="./src/trace.js?v=report-sections-v10" defer></script>
+<script src="./src/stats.js?v=report-sections-v10" defer></script>
+<script src="./src/report.js?v=report-sections-v10" defer></script>
+<script src="./src/measurement-sets.js?v=report-sections-v10" defer></script>
+<script src="./src/ui.js?v=report-sections-v10" defer></script>
+<script src="./src/timeline.js?v=report-sections-v10" defer></script>
+<script src="./src/app.js?v=report-sections-v10" defer></script>
 </body>
 </html>

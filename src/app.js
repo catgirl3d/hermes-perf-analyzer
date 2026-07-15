@@ -7,16 +7,21 @@
         ...require('./report.js'),
         ...require('./measurement-sets.js'),
         ...require('./ui.js'),
+        ...require('./timeline.js'),
       }
     : HermesPerfAnalyzer;
   const {
     $, 
+    DEFAULT_TEXT_REPORT_SECTIONS,
     GROUPS,
+    TEXT_REPORT_SECTION_KEYS,
     buildBackendContextLabels,
     buildBackendGroups,
     buildComparisonRows,
+    buildComparisonSummary,
     buildComparisonTextReport,
     buildTextReport,
+    buildSampleTimeline,
     classifyRelativeValue,
     colorClass,
     computeStats,
@@ -52,14 +57,18 @@
   let measurementStorage = null;
   let pendingSetRemoval = null;
   let backendImpactFilter = 'all';
+  let currentResultRows = [];
+  let currentTimeline = null;
+  let selectedTimelineSampleIndex = 0;
+  let selectedTimelineSegmentIndex = null;
 
   const SAMPLE_METRICS = [
     { key: 'elapsedMs', label: 'Elapsed', read: (row) => row.elapsedMs, primary: true },
     { key: 'rpcDuration', label: 'RPC', read: (row) => row.rpcDuration },
     { key: 'preRepoBuiltAt', label: 'Pre-RPC repo', read: (row) => row.preRepoBuiltAt, visible: (row) => row._format === 'new' },
     { key: 'coldViewAt', label: 'View ready', read: (row) => row.coldViewAt },
-    { key: 'paintWaitDur', label: 'Paint wait', read: (row) => row.paintWaitDur },
-    { key: 'raf2WaitMs', label: 'raf-2 wait', read: (row) => row.raf2WaitMs },
+    { key: 'paintWaitDur', label: 'To Thread layout', read: (row) => row.paintWaitDur },
+    { key: 'raf2WaitMs', label: 'Double-RAF wait', read: (row) => row.raf2WaitMs },
     { key: 'backendHandlerMs', label: 'BE handler', read: (row) => row.backend.handlerMs, visible: (row) => row._hasBackend },
     { key: 'outsideHandlerMs', label: 'outside RTT', read: (row) => row.backend.outsideHandlerMs, visible: (row) => row._hasBackend },
   ];
@@ -109,6 +118,32 @@
 
   function copyTextReport() {
     return copyToClipboard(lastTextReport, $('copyReportButton'), 'Copied', 'Copy report');
+  }
+
+  function readTextReportSections() {
+    return Object.fromEntries(TEXT_REPORT_SECTION_KEYS.map((key) => {
+      const input = document.querySelector(`[data-report-section="${key}"]`);
+      return [key, input?.checked ?? DEFAULT_TEXT_REPORT_SECTIONS[key]];
+    }));
+  }
+
+  function refreshTextReport() {
+    const sections = readTextReportSections();
+    const selectedCount = Object.values(sections).filter(Boolean).length;
+
+    $('reportSectionCount').textContent = `${selectedCount}/${TEXT_REPORT_SECTION_KEYS.length}`;
+
+    if (!currentResultRows.length) return;
+
+    lastTextReport = buildTextReport(currentResultRows, sections);
+    $('textReportOutput').textContent = lastTextReport;
+    $('copyReportButton').textContent = 'Copy report';
+    $('copyReportButton').removeAttribute('aria-label');
+  }
+
+  function handleTextReportSectionsChange(event) {
+    if (!event.target.matches('[data-report-section]')) return;
+    refreshTextReport();
   }
 
   function copyComparisonReport() {
@@ -192,6 +227,7 @@
     const section = $('comparisonSection');
     if (selectedSets.length !== 2) {
       lastComparisonReport = '';
+      $('comparisonOutcome').innerHTML = '';
       $('comparisonReportOutput').textContent = '';
       $('copyComparisonButton').textContent = 'Copy comparison';
       section.hidden = true;
@@ -202,10 +238,23 @@
     const rowsA = setA.traces.map(normalizeTrace).map(extract);
     const rowsB = setB.traces.map(normalizeTrace).map(extract);
     const comparisonRows = buildComparisonRows(rowsA, rowsB);
+    const comparisonSummary = buildComparisonSummary(comparisonRows);
 
     $('comparisonTitle').textContent = `${setA.name} vs ${setB.name}`;
     $('comparisonAHead').textContent = `${setA.name} · p50`;
     $('comparisonBHead').textContent = `${setB.name} · p50`;
+    const summaryClass = deltaClass(comparisonSummary.delta);
+    $('comparisonOutcome').innerHTML = `
+      <div class="comparison-outcome-status">
+        <span>Overall result</span>
+        <strong class="${summaryClass}">${comparisonSummary.label}</strong>
+      </div>
+      <div class="comparison-outcome-values">
+        <span><small>${escapeHtml(setA.name)} · p50</small><strong>${fmtMs(comparisonSummary.valueA)}</strong></span>
+        <span><small>${escapeHtml(setB.name)} · p50</small><strong>${fmtMs(comparisonSummary.valueB)}</strong></span>
+        <span class="${summaryClass}"><small>Delta B − A</small><strong>${formatSigned(comparisonSummary.delta, ' ms')}</strong></span>
+        <span class="${summaryClass}"><small>Change</small><strong>${formatSigned(comparisonSummary.percent, '%')}</strong></span>
+      </div>`;
     $('comparisonBody').innerHTML = comparisonRows.map((row) => {
       const cls = deltaClass(row.delta);
       return `<tr>
@@ -381,6 +430,184 @@
     renderMeasurementSets();
   }
 
+  function formatTimelineValue(value) {
+    if (!Number.isFinite(value)) return '—';
+    if (Math.abs(value) < 1) return `${fmt(value * 1000, 0)} µs`;
+    return `${fmt(value)} ms`;
+  }
+
+  function timelineTone(segment) {
+    if (segment.kind === 'gap') return 'gap';
+    return {
+      'Profile resolve': 'profile',
+      'Pre-RPC setup': 'setup',
+      'Resume RPC': 'rpc',
+      'Publish view': 'publish',
+      'Paint wait': 'paint-wait',
+      Paint: 'paint',
+      Finalize: 'finalize',
+    }[segment.label] || 'default';
+  }
+
+  function timelineSegmentDescription(segment) {
+    return `${segment.label}: ${formatTimelineValue(segment.durationMs)}, ${fmt(segment.share)}% of total, ${segment.sourceFrom} to ${segment.sourceTo}`;
+  }
+
+  function updateTimelineSegmentSelection() {
+    $('timelineRail').querySelectorAll('[data-timeline-segment-index]').forEach((button) => {
+      const selected = Number(button.dataset.timelineSegmentIndex) === selectedTimelineSegmentIndex;
+      button.classList.toggle('is-selected', selected);
+      button.setAttribute('aria-pressed', String(selected));
+    });
+  }
+
+  function renderTimelineDetail(segmentIndex, { pin = false } = {}) {
+    const segment = currentTimeline?.segments[segmentIndex];
+    if (!segment) {
+      $('timelineDetail').innerHTML = '<p class="timeline-empty">No measurable intervals in this sample.</p>';
+      return;
+    }
+    if (pin) selectedTimelineSegmentIndex = segmentIndex;
+    updateTimelineSegmentSelection();
+    $('timelineDetail').innerHTML = `
+      <div class="timeline-detail-head">
+        <div>
+          <span class="timeline-detail-kicker">${segment.kind === 'gap' ? 'Instrumentation gap' : 'Selected interval'}</span>
+          <h4>${escapeHtml(segment.label)}</h4>
+        </div>
+        <strong>${escapeHtml(formatTimelineValue(segment.durationMs))}</strong>
+      </div>
+      <div class="timeline-detail-grid">
+        <span><small>Window</small>${fmt(segment.startMs)} → ${fmt(segment.endMs)} ms</span>
+        <span><small>Share</small>${fmt(segment.share)}%</span>
+        <span><small>From</small><code>${escapeHtml(segment.sourceFrom)}</code></span>
+        <span><small>To</small><code>${escapeHtml(segment.sourceTo)}</code></span>
+      </div>`;
+  }
+
+  function renderTimelineNotices(timeline) {
+    const notices = [];
+    if (timeline.missingStages.length) {
+      notices.push(`${timeline.missingStages.length} milestone${timeline.missingStages.length === 1 ? '' : 's'} not reported: ${timeline.missingStages.join(', ')}`);
+    }
+    timeline.warnings.forEach((warning) => {
+      if (warning.type === 'non-monotonic') {
+        notices.push(`Skipped non-monotonic ${warning.stage} at ${fmt(warning.atMs)} ms; previous milestone was ${fmt(warning.previousAtMs)} ms.`);
+      } else if (warning.type === 'out-of-range') {
+        notices.push(`Skipped out-of-range ${warning.stage} at ${fmt(warning.atMs)} ms.`);
+      } else {
+        notices.push('Timeline unavailable because elapsedMs is invalid.');
+      }
+    });
+    $('timelineNotices').innerHTML = notices
+      .map((notice) => `<p>${escapeHtml(notice)}</p>`)
+      .join('');
+  }
+
+  function renderTimeline(rows) {
+    currentResultRows = rows;
+    if (!rows.length) return;
+    selectedTimelineSampleIndex = Math.max(0, Math.min(selectedTimelineSampleIndex, rows.length - 1));
+    const row = rows[selectedTimelineSampleIndex];
+    currentTimeline = buildSampleTimeline(row);
+
+    $('timelineSampleLabel').textContent = `Sample ${selectedTimelineSampleIndex + 1} / ${rows.length}`;
+    $('timelinePrevButton').disabled = selectedTimelineSampleIndex === 0;
+    $('timelineNextButton').disabled = selectedTimelineSampleIndex === rows.length - 1;
+    $('timelineTotalLabel').textContent = formatTimelineValue(currentTimeline.totalMs);
+    $('timelineRail').setAttribute(
+      'aria-label',
+      `Sample ${selectedTimelineSampleIndex + 1} timeline, ${formatTimelineValue(currentTimeline.totalMs)}`,
+    );
+
+    const meta = [
+      `${formatTimelineValue(currentTimeline.totalMs)} total`,
+      `${row.messageCount ?? '?'} messages`,
+      `${row._format === 'new' ? 'snapshot' : 'legacy'} layout`,
+      currentTimeline.gapMs > 0
+        ? `${formatTimelineValue(currentTimeline.gapMs)} uninstrumented`
+        : 'complete milestone coverage',
+    ];
+    $('timelineMeta').innerHTML = meta.map((value) => `<span>${escapeHtml(value)}</span>`).join('');
+
+    const timelineSegments = currentTimeline.segments.map((segment, index) => {
+      const left = currentTimeline.totalMs > 0 ? (segment.startMs / currentTimeline.totalMs) * 100 : 0;
+      const width = currentTimeline.totalMs > 0 ? (segment.durationMs / currentTimeline.totalMs) * 100 : 0;
+      const compactClass = segment.share < 8 ? ' is-compact' : '';
+      const tinyClass = segment.share < 2 ? ' is-tiny' : '';
+      const description = escapeHtml(timelineSegmentDescription(segment));
+      return `<button
+        class="timeline-segment timeline-tone-${timelineTone(segment)}${compactClass}${tinyClass}"
+        type="button"
+        data-timeline-segment-index="${index}"
+        style="left:${left.toFixed(4)}%;width:${width.toFixed(4)}%"
+        aria-label="${description}"
+        aria-pressed="false"
+        title="${description}"
+      >
+        <span>${escapeHtml(segment.label)}</span>
+        <small>${escapeHtml(formatTimelineValue(segment.durationMs))} · ${fmt(segment.share)}%</small>
+      </button>`;
+    }).join('');
+    $('timelineRail').innerHTML = `<div class="timeline-track">${timelineSegments}</div>`;
+
+    if (currentTimeline.segments.length) {
+      if (!Number.isInteger(selectedTimelineSegmentIndex)
+          || !currentTimeline.segments[selectedTimelineSegmentIndex]) {
+        selectedTimelineSegmentIndex = currentTimeline.segments.reduce((bestIndex, segment, index, segments) => {
+          const best = segments[bestIndex];
+          if (segment.kind === 'phase' && best.kind === 'gap') return index;
+          if (segment.kind === best.kind && segment.durationMs > best.durationMs) return index;
+          return bestIndex;
+        }, 0);
+      }
+      renderTimelineDetail(selectedTimelineSegmentIndex);
+    } else {
+      renderTimelineDetail(-1);
+    }
+    renderTimelineNotices(currentTimeline);
+  }
+
+  function updateTimelineSampleCards() {
+    $('sampleCards').querySelectorAll('[data-timeline-sample-index]').forEach((card) => {
+      const selected = Number(card.dataset.timelineSampleIndex) === selectedTimelineSampleIndex;
+      card.classList.toggle('is-timeline-selected', selected);
+      card.setAttribute('aria-pressed', String(selected));
+    });
+  }
+
+  function selectTimelineSample(index) {
+    if (!currentResultRows.length) return;
+    const nextIndex = Math.max(0, Math.min(Number(index), currentResultRows.length - 1));
+    if (!Number.isInteger(nextIndex)) return;
+    selectedTimelineSampleIndex = nextIndex;
+    selectedTimelineSegmentIndex = null;
+    renderTimeline(currentResultRows);
+    updateTimelineSampleCards();
+  }
+
+  function handleTimelineSampleCardClick(event) {
+    const card = event.target.closest('[data-timeline-sample-index]');
+    if (card) selectTimelineSample(Number(card.dataset.timelineSampleIndex));
+  }
+
+  function handleTimelineRailClick(event) {
+    const segment = event.target.closest('[data-timeline-segment-index]');
+    if (segment) renderTimelineDetail(Number(segment.dataset.timelineSegmentIndex), { pin: true });
+  }
+
+  function handleTimelineRailPreview(event) {
+    const segment = event.target.closest('[data-timeline-segment-index]');
+    if (segment) renderTimelineDetail(Number(segment.dataset.timelineSegmentIndex));
+  }
+
+  function restorePinnedTimelineDetail(event) {
+    if (event.type === 'focusout' && $('timelineRail').contains(event.relatedTarget)) return;
+    if (Number.isInteger(selectedTimelineSegmentIndex)) {
+      renderTimelineDetail(selectedTimelineSegmentIndex);
+    }
+  }
+
   function renderResults(rows) {
     $('resultsSection').classList.add('visible');
 
@@ -399,13 +626,13 @@
     const elapsed = computeStats(rows, 'elapsedMs');
     const rpc = computeStats(rows, 'rpcDuration');
     const coldView = computeStats(rows, 'coldViewAt');
-    const paintWait = computeStats(rows, 'paintWaitDur');
+    const doubleRafWait = computeStats(rows, 'raf2WaitMs');
     const outsideHandler = rows.some((row) => row._hasBackend) ? computeStats(rows, null, 'outsideHandlerMs') : null;
     const pills = [
       { label: 'Median elapsed', val: fmtMs(elapsed?.med), sub: `p90 = ${fmtMs(elapsed?.p90)}`, cls: colorClass(elapsed?.med || 0, 1500) },
       { label: 'Median RPC', val: fmtMs(rpc?.med), sub: `p90 = ${fmtMs(rpc?.p90)}`, cls: 'bad' },
       { label: 'View ready at', val: fmtMs(coldView?.med), sub: `p90 = ${fmtMs(coldView?.p90)}`, cls: 'medium' },
-      { label: 'Paint wait', val: fmtMs(paintWait?.med), sub: `p90 = ${fmtMs(paintWait?.p90)}`, cls: 'medium' },
+      { label: 'Double-RAF wait', val: fmtMs(doubleRafWait?.med), sub: `p90 = ${fmtMs(doubleRafWait?.p90)}`, cls: 'medium' },
       outsideHandler ? { label: 'Outside RTT', val: fmtMs(outsideHandler.med), sub: `p90 = ${fmtMs(outsideHandler.p90)}`, cls: 'bad' } : null,
       { label: 'Samples', val: rows.length, sub: `${newCount} snapshot · ${oldCount} legacy`, cls: '' },
     ].filter(Boolean);
@@ -416,6 +643,7 @@
         <div class="pill-val ${pill.cls}">${pill.val}</div>
         <div class="pill-sub">${pill.sub}</div>
       </div>`).join('');
+    renderTimeline(rows);
 
     const globalMax = Math.max(
       ...GROUPS.flatMap((group) => group.metrics.map((metric) => computeStats(rows, metric.key)?.max ?? NaN)).filter((value) => !isNaN(value)),
@@ -549,8 +777,7 @@
       $('backendGrid').innerHTML = '';
     }
 
-    lastTextReport = buildTextReport(rows);
-    $('textReportOutput').textContent = lastTextReport;
+    refreshTextReport();
 
     const sampleDistributions = Object.fromEntries(SAMPLE_METRICS.map((metric) => [
       metric.key,
@@ -574,19 +801,26 @@
       );
       const elapsedMetric = renderedMetrics.find(({ metric }) => metric.primary);
       const detailMetrics = renderedMetrics.filter(({ metric }) => !metric.primary);
-      return `<div class="sample-card sc-card-${cardStatus}">
-        <div class="sc-head">
+      const timelineSelected = index === selectedTimelineSampleIndex;
+      return `<button
+        class="sample-card sc-card-${cardStatus}${timelineSelected ? ' is-timeline-selected' : ''}"
+        type="button"
+        data-timeline-sample-index="${index}"
+        aria-pressed="${timelineSelected}"
+        aria-label="Show timeline for Sample ${index + 1}"
+      >
+        <span class="sc-head">
           <span>Sample ${index + 1}</span>
-          <div style="display:flex;gap:6px;align-items:center">
+          <span style="display:flex;gap:6px;align-items:center">
             <span style="font-size:10px;color:var(--muted)">${row.messageCount ?? '?'} msg</span>
             <span class="sc-format ${formatLabel}">${formatLabel}</span>
-          </div>
-        </div>
-        <div class="sc-elapsed sc-relative-${elapsedMetric.comparison.key}" title="${escapeHtml(relativeMetricTitle(elapsedMetric.metric, elapsedMetric.comparison))}">${fmt(row.elapsedMs)} ms</div>
-        <div class="sc-detail">
-          ${detailMetrics.map(({ metric, markup }) => `<div class="sc-metric-row"><span>${metric.label}</span>${markup}</div>`).join('')}
-        </div>
-      </div>`;
+          </span>
+        </span>
+        <span class="sc-elapsed sc-relative-${elapsedMetric.comparison.key}" title="${escapeHtml(relativeMetricTitle(elapsedMetric.metric, elapsedMetric.comparison))}">${fmt(row.elapsedMs)} ms</span>
+        <span class="sc-detail">
+          ${detailMetrics.map(({ metric, markup }) => `<span class="sc-metric-row"><span>${metric.label}</span>${markup}</span>`).join('')}
+        </span>
+      </button>`;
     }).join('');
   }
 
@@ -625,6 +859,8 @@
       return;
     }
 
+    selectedTimelineSampleIndex = 0;
+    selectedTimelineSegmentIndex = null;
     currentTraces = traces;
     setSaveAvailability(true);
     $('parseInfo').textContent = `Parsed ${traces.length} trace(s).`;
@@ -685,6 +921,10 @@
     $('copyReportButton').textContent = 'Copy report';
     $('copyReportButton').removeAttribute('aria-label');
     lastTextReport = '';
+    currentResultRows = [];
+    currentTimeline = null;
+    selectedTimelineSampleIndex = 0;
+    selectedTimelineSegmentIndex = null;
     $('resultsSection').classList.remove('visible');
   }
 
@@ -734,16 +974,26 @@
       if (event.key === 'Enter' && !$('saveSetButton').disabled) saveCurrentSet();
     });
     $('setCards').addEventListener('click', handleSetCardsClick);
+    $('sampleCards').addEventListener('click', handleTimelineSampleCardClick);
+    $('timelinePrevButton').addEventListener('click', () => selectTimelineSample(selectedTimelineSampleIndex - 1));
+    $('timelineNextButton').addEventListener('click', () => selectTimelineSample(selectedTimelineSampleIndex + 1));
+    $('timelineRail').addEventListener('click', handleTimelineRailClick);
+    $('timelineRail').addEventListener('mouseover', handleTimelineRailPreview);
+    $('timelineRail').addEventListener('mouseleave', restorePinnedTimelineDetail);
+    $('timelineRail').addEventListener('focusin', handleTimelineRailPreview);
+    $('timelineRail').addEventListener('focusout', restorePinnedTimelineDetail);
     $('backendImpactFilters').addEventListener('click', handleBackendImpactFilterClick);
     $('cancelRemoveSetButton').addEventListener('click', () => closeMeasurementSetRemovalDialog());
     $('confirmRemoveSetButton').addEventListener('click', confirmMeasurementSetRemoval);
     $('removeSetDialog').addEventListener('click', handleRemoveSetDialogClick);
     document.addEventListener('keydown', handleRemoveSetDialogKeydown);
     $('tracesWrapper').addEventListener('input', handleTraceInput);
+    $('reportSectionFilters').addEventListener('change', handleTextReportSectionsChange);
     $('copyReportButton').addEventListener('click', copyTextReport);
     $('copyComparisonButton').addEventListener('click', copyComparisonReport);
     $('downloadReportButton').addEventListener('click', downloadTextReport);
     clearAll();
+    refreshTextReport();
     renderMeasurementSets();
   }
 
