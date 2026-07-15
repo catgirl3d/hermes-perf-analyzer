@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   buildComparisonRows,
+  buildComparisonSummary,
   buildBackendGroups,
   buildMetricPresentation,
   classifyRelativeValue,
@@ -24,6 +25,7 @@ const {
   serializeSetTracesForInputs,
   shouldAppendTrailingTrace,
 } = require('../src/index.js');
+const { buildSampleTimeline } = require('../src/timeline.js');
 const { filterBackendGroups, getMeasurementSetRemovalCopy } = require('../src/app.js');
 
 function trace(elapsedMs, rpcDurationMs) {
@@ -43,6 +45,96 @@ function trace(elapsedMs, rpcDurationMs) {
     ],
   };
 }
+
+test('builds an additive per-sample milestone timeline', () => {
+  const timeline = buildSampleTimeline({
+    elapsedMs: 400,
+    profileAt: 20,
+    rpcStartAt: 50,
+    rpcFinishedAt: 250,
+    coldViewAt: 300,
+    raf1At: 340,
+    raf2At: 400,
+  });
+
+  assert.deepEqual(timeline.segments.map((segment) => [segment.label, segment.durationMs]), [
+    ['Profile resolve', 20],
+    ['Pre-RPC setup', 30],
+    ['Resume RPC', 200],
+    ['Publish view', 50],
+    ['View → RAF1', 40],
+    ['RAF1 → RAF2', 60],
+  ]);
+  assert.equal(timeline.segments.reduce((sum, segment) => sum + segment.durationMs, 0), 400);
+  assert.equal(timeline.measuredMs, 400);
+  assert.equal(timeline.gapMs, 0);
+  assert.deepEqual(timeline.missingStages, []);
+  assert.deepEqual(timeline.warnings, []);
+
+  const rpc = timeline.segments.find((segment) => segment.label === 'Resume RPC');
+  assert.deepEqual(
+    {
+      startMs: rpc.startMs,
+      endMs: rpc.endMs,
+      share: rpc.share,
+      sourceFrom: rpc.sourceFrom,
+      sourceTo: rpc.sourceTo,
+    },
+    {
+      startMs: 50,
+      endMs: 250,
+      share: 50,
+      sourceFrom: 'resume-rpc-start',
+      sourceTo: 'resume-rpc-finished',
+    },
+  );
+});
+
+test('bridges missing milestones with explicit uninstrumented gaps', () => {
+  const timeline = buildSampleTimeline({
+    elapsedMs: 400,
+    rpcStartAt: 50,
+    rpcFinishedAt: 250,
+    raf2At: 400,
+  });
+
+  assert.deepEqual(timeline.segments.map((segment) => [segment.kind, segment.durationMs]), [
+    ['gap', 50],
+    ['phase', 200],
+    ['gap', 150],
+  ]);
+  assert.equal(timeline.measuredMs, 200);
+  assert.equal(timeline.gapMs, 200);
+  assert.deepEqual(timeline.missingStages, [
+    'profile-resolve-finished',
+    'cold-view-published',
+    'paint-raf-1',
+  ]);
+});
+
+test('drops non-monotonic milestones without producing negative segments', () => {
+  const timeline = buildSampleTimeline({
+    elapsedMs: 200,
+    profileAt: 50,
+    rpcStartAt: 40,
+    rpcFinishedAt: 120,
+    coldViewAt: 150,
+    raf1At: 180,
+    raf2At: 200,
+  });
+
+  assert.equal(timeline.segments.reduce((sum, segment) => sum + segment.durationMs, 0), 200);
+  assert.ok(timeline.segments.every((segment) => segment.durationMs > 0));
+  assert.deepEqual(timeline.warnings, [
+    {
+      type: 'non-monotonic',
+      stage: 'resume-rpc-start',
+      atMs: 40,
+      previousAtMs: 50,
+    },
+  ]);
+  assert.equal(timeline.segments.some((segment) => segment.kind === 'gap'), true);
+});
 
 test('generates spreadsheet-style default set names', () => {
   assert.equal(nextSetName(0), 'Set A');
@@ -96,6 +188,40 @@ test('comparison uses p50 and calculates B relative to A', () => {
   assert.equal(elapsed.valueB, 90);
   assert.equal(elapsed.delta, -20);
   assert.ok(Math.abs(elapsed.percent - (-18.181818)) < 0.0001);
+
+  assert.deepEqual(buildComparisonSummary(comparison), {
+    valueA: 110,
+    valueB: 90,
+    delta: -20,
+    percent: elapsed.percent,
+    key: 'faster',
+    label: 'B faster',
+  });
+});
+
+test('labels equal and unavailable total elapsed comparison summaries safely', () => {
+  assert.deepEqual(buildComparisonSummary([{
+    key: 'elapsedMs',
+    valueA: 100,
+    valueB: 100,
+    delta: 0,
+    percent: 0,
+  }]), {
+    valueA: 100,
+    valueB: 100,
+    delta: 0,
+    percent: 0,
+    key: 'neutral',
+    label: 'No material change',
+  });
+  assert.deepEqual(buildComparisonSummary([]), {
+    valueA: NaN,
+    valueB: NaN,
+    delta: NaN,
+    percent: NaN,
+    key: 'unavailable',
+    label: 'No comparable total',
+  });
 });
 
 test('builds an LLM-ready comparison report with deltas', () => {
@@ -110,6 +236,7 @@ test('builds an LLM-ready comparison report with deltas', () => {
   assert.match(report, /Total elapsed/);
   assert.match(report, /delta\s+-20\.0 ms/);
   assert.match(report, /change\s+-18\.2%/);
+  assert.match(report, /OVERALL p50 total elapsed: A 110\.0 ms \| B 90\.0 ms \| delta -20\.0 ms \| change -18\.2% \| B faster/);
   assert.match(report, /P90 METRICS/);
   assert.match(report, /P95 METRICS/);
 });
@@ -120,10 +247,96 @@ test('normalizes a raw stages array before extraction', () => {
   const row = extract(normalized);
 
   assert.equal(normalized.outcome, 'cold-resumed');
-  assert.equal(row._rendererSelectionVersion, 5);
+  assert.equal(row._rendererSelectionVersion, 8);
   assert.equal(row.elapsedMs, 200);
   assert.equal(row.rpcDurationMs, 60);
-  assert.match(buildTextReport([row]), /analyzer: renderer-breakdown-v5 \| selector: post-adapter-v5/);
+  assert.match(buildTextReport([row]), /analyzer: renderer-breakdown-v10 \| selector: linked-markdown-v8/);
+});
+
+test('omits backend aggregates, context, and sample fields when backend reporting is disabled', () => {
+  const sample = trace(200, 60);
+  Object.assign(sample.stages[1], {
+    backendTimingVersion: 12,
+    backendResumePrewarmMode: 'composer_intent',
+    clientRequestReceiveAckMs: 45,
+  });
+  const row = extract(normalizeTrace(sample));
+  const report = buildTextReport([row], { backend: false });
+
+  assert.match(report, /^samples: 1$/m);
+  assert.doesNotMatch(report, /backend context:/);
+  assert.doesNotMatch(report, /BACKEND \/ TRANSPORT/);
+  assert.doesNotMatch(report, /reqAck=/);
+  assert.doesNotMatch(report, /handler=/);
+  assert.doesNotMatch(report, /prewarm=/);
+  assert.match(report, /SUMMARY/);
+  assert.match(report, /RENDERER SCHEDULING/);
+  assert.match(report, /FRAME \/ RAF SCHEDULING/);
+  assert.match(report, /SAMPLES/);
+});
+
+test('filters aggregate and sample details by report section', () => {
+  const row = extract(normalizeTrace(trace(200, 60)));
+  const report = buildTextReport([row], {
+    summary: false,
+    renderer: false,
+    raf: false,
+    backend: false,
+    samples: true,
+  });
+
+  assert.doesNotMatch(report, /SUMMARY/);
+  assert.doesNotMatch(report, /RENDERER SCHEDULING/);
+  assert.doesNotMatch(report, /FRAME \/ RAF SCHEDULING/);
+  assert.doesNotMatch(report, /BACKEND \/ TRANSPORT/);
+  assert.match(report, /SAMPLES/);
+  assert.match(report, /elapsed=200\.0/);
+  assert.match(report, /rpc=60\.0/);
+  assert.doesNotMatch(report, /threadAt=/);
+  assert.doesNotMatch(report, /raf2Wait=/);
+  assert.doesNotMatch(report, /reqAck=/);
+});
+
+test('can omit per-sample rows while retaining selected aggregates', () => {
+  const row = extract(normalizeTrace(trace(200, 60)));
+  const report = buildTextReport([row], {
+    renderer: false,
+    raf: true,
+    backend: false,
+    samples: false,
+  });
+
+  assert.match(report, /SUMMARY/);
+  assert.match(report, /FRAME \/ RAF SCHEDULING/);
+  assert.doesNotMatch(report, /RENDERER SCHEDULING/);
+  assert.doesNotMatch(report, /BACKEND \/ TRANSPORT/);
+  assert.doesNotMatch(report, /SAMPLES/);
+});
+
+test('reports ACK blind-spot diagnostics and previous WebSocket work', () => {
+  const sample = trace(200, 60);
+  Object.assign(sample.stages[1], {
+    backendWsEventLoopLagMs: 3,
+    backendWsPreviousDispatchMs: 2500,
+    backendWsPreviousMethod: 'commands.catalog',
+    backendWsPreviousRequestFinishedAgoMs: 0.5,
+    backendWsPreviousRequestMs: 2501,
+    clientRequestReceiveAckMs: 2600,
+    clientRequestReceiveAckRendererLagMs: 40,
+    clientRequestReceiveAckUnattributedMs: 2560,
+  });
+  const row = extract(normalizeTrace(sample));
+  const report = buildTextReport([row]);
+
+  assert.equal(row.backend.wsPreviousMethod, 'commands.catalog');
+  assert.equal(row.backend.wsPreviousDispatchMs, 2500);
+  assert.equal(row.backend.wsPreviousRequestMs, 2501);
+  assert.equal(row.backend.wsEventLoopLagMs, 3);
+  assert.equal(row.backend.clientReqAckRendererLagMs, 40);
+  assert.equal(row.backend.clientReqAckUnattributedMs, 2560);
+  assert.match(report, /prev=commands\.catalog/);
+  assert.match(report, /prevMs=2500\.0/);
+  assert.match(report, /rendererLag=40\.0/);
 });
 
 test('selects the first thread commit after the post-RPC adapter sync', () => {
@@ -150,10 +363,20 @@ test('selects the first thread commit after the post-RPC adapter sync', () => {
     {
       name: 'assistant-message-layout-commit',
       atMs: 188,
+      messageId: 'assistant-dominant',
       renderBodyDurationMs: 2,
       renderToInsertionCommitMs: 14,
       insertionCommitToLayoutMs: 4,
       renderToLayoutCommitMs: 18,
+    },
+    {
+      name: 'assistant-markdown-layout-commit',
+      atMs: 187,
+      messageId: 'assistant-dominant',
+      renderBodyDurationMs: 1.5,
+      renderToInsertionCommitMs: 12,
+      insertionCommitToLayoutMs: 3,
+      renderToLayoutCommitMs: 15,
     },
     {
       name: 'thread-message-list-layout-commit',
@@ -164,6 +387,8 @@ test('selects the first thread commit after the post-RPC adapter sync', () => {
       renderToLayoutCommitMs: 20,
       runtimeSyncStartToRenderStartMs: 19,
     },
+    { name: 'paint-raf-1', atMs: 220 },
+    { name: 'paint-raf-2', atMs: 230, waitDurationMs: 129 },
   ]));
 
   assert.equal(row.adapterSyncToThreadRenderMs, 19);
@@ -171,12 +396,124 @@ test('selects the first thread commit after the post-RPC adapter sync', () => {
   assert.equal(row.threadAfterBodyToInsertionMs, 13);
   assert.equal(row.threadInsertionToLayoutMs, 5);
   assert.equal(row.threadRenderToLayoutMs, 20);
+  assert.equal(row.threadSelectedAtMs, 190);
+  assert.equal(row.assistantMessageSelectedAtMs, 188);
+  assert.equal(row.assistantMarkdownSelectedAtMs, 187);
+  assert.equal(row.assistantMessageId, 'assistant-dominant');
+  assert.equal(row.assistantMarkdownMessageId, 'assistant-dominant');
+  assert.equal(row.assistantMessageMatchedToMarkdown, true);
+  assert.equal(row.assistantMarkdownCandidateCount, 1);
   assert.equal(row.userMessageRenderBodyMs, 1);
   assert.equal(row.assistantMessageRenderBodyMs, 2);
   assert.equal(row.assistantMessageAfterBodyToInsertionMs, 12);
   assert.equal(row.assistantMessageInsertionToLayoutMs, 4);
   assert.equal(row.assistantMessageRenderToLayoutMs, 18);
+  assert.equal(row.assistantMarkdownRenderBodyMs, 1.5);
+  assert.equal(row.assistantMarkdownAfterBodyToInsertionMs, 10.5);
+  assert.equal(row.assistantMarkdownInsertionToLayoutMs, 3);
+  assert.equal(row.assistantMarkdownRenderToLayoutMs, 15);
+  assert.equal(row.adapterSyncToThreadLayoutMs, 39);
+  assert.equal(row.adapterSyncToMarkdownLayoutMs, 36);
+  assert.equal(row.markdownLayoutToRaf1Ms, 33);
+  assert.equal(row.raf1ToRaf2Ms, 10);
   assert.equal(row.paintWaitDur, 89);
+});
+
+test('matches the Assistant shell to the dominant Markdown message', () => {
+  const row = extract(normalizeTrace([
+    { name: 'resume-rpc-start', atMs: 10 },
+    { name: 'resume-rpc-finished', atMs: 20, sincePreviousStageMs: 10 },
+    { name: 'paint-wait-start', atMs: 21 },
+    { name: 'runtime-adapter-synced', atMs: 30 },
+    {
+      name: 'assistant-message-layout-commit',
+      atMs: 40,
+      messageId: 'assistant-short',
+      renderToLayoutCommitMs: 5,
+    },
+    {
+      name: 'assistant-markdown-layout-commit',
+      atMs: 41,
+      messageId: 'assistant-short',
+      renderToLayoutCommitMs: 10,
+    },
+    {
+      name: 'assistant-message-layout-commit',
+      atMs: 50,
+      messageId: 'assistant-dominant',
+      renderBodyDurationMs: 2,
+      renderToInsertionCommitMs: 12,
+      insertionCommitToLayoutMs: 4,
+      renderToLayoutCommitMs: 16,
+    },
+    {
+      name: 'thread-message-list-layout-commit',
+      atMs: 55,
+      renderToLayoutCommitMs: 20,
+    },
+    {
+      name: 'assistant-markdown-layout-commit',
+      atMs: 140,
+      messageId: 'assistant-dominant',
+      renderBodyDurationMs: 3,
+      renderToInsertionCommitMs: 70,
+      insertionCommitToLayoutMs: 20,
+      renderToLayoutCommitMs: 90,
+    },
+    { name: 'paint-raf-1', atMs: 160 },
+    { name: 'paint-raf-2', atMs: 180, waitDurationMs: 159 },
+  ]));
+
+  assert.equal(row.assistantMarkdownCandidateCount, 2);
+  assert.equal(row.assistantMarkdownMessageId, 'assistant-dominant');
+  assert.equal(row.assistantMessageId, 'assistant-dominant');
+  assert.equal(row.assistantMessageMatchedToMarkdown, true);
+  assert.equal(row.assistantMessageSelectedAtMs, 50);
+  assert.equal(row.assistantMarkdownSelectedAtMs, 140);
+  assert.equal(row.assistantMessageRenderToLayoutMs, 16);
+  assert.equal(row.assistantMarkdownRenderToLayoutMs, 90);
+  assert.equal(row.assistantLayoutToMarkdownLayoutMs, 90);
+  assert.equal(row.adapterSyncToMarkdownLayoutMs, 110);
+  assert.equal(row.threadLayoutToMarkdownLayoutMs, 85);
+  assert.equal(row.markdownLayoutToRaf1Ms, 20);
+  assert.equal(row.raf1ToRaf2Ms, 20);
+
+  const report = buildTextReport([row]);
+  assert.match(report, /note: aggregate percentiles are independent distributions and are not an additive critical path/);
+  assert.match(report, /markdownAt=140\.0/);
+  assert.match(report, /markdownMsg=assistant-dominant/);
+  assert.match(report, /assistantMatched=yes/);
+  assert.match(report, /markdownCandidates=2/);
+  assert.match(report, /adapterMarkdown=110\.0/);
+  assert.match(report, /markdownRaf1=20\.0/);
+  assert.match(report, /FRAME \/ RAF SCHEDULING/);
+  assert.match(report, /Dominant Markdown layout → RAF1/);
+  assert.match(report, /RAF1 → RAF2/);
+});
+
+test('does not report an unrelated Assistant when the selected Markdown has no matching shell', () => {
+  const row = extract(normalizeTrace([
+    { name: 'resume-rpc-start', atMs: 10 },
+    { name: 'resume-rpc-finished', atMs: 20, sincePreviousStageMs: 10 },
+    { name: 'runtime-adapter-synced', atMs: 30 },
+    {
+      name: 'assistant-message-layout-commit',
+      atMs: 40,
+      messageId: 'assistant-unrelated',
+      renderToLayoutCommitMs: 5,
+    },
+    {
+      name: 'assistant-markdown-layout-commit',
+      atMs: 50,
+      messageId: 'assistant-selected',
+      renderToLayoutCommitMs: 20,
+    },
+  ]));
+
+  assert.equal(row.assistantMarkdownMessageId, 'assistant-selected');
+  assert.equal(row.assistantMessageId, null);
+  assert.equal(row.assistantMessageMatchedToMarkdown, false);
+  assert.equal(Number.isFinite(row.assistantMessageRenderToLayoutMs), false);
 });
 
 test('extracts timing v9 and prewarm metadata from a raw stages array', () => {

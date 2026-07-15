@@ -11,21 +11,44 @@
     summarizePercentiles,
   } = stats;
 
+  const TEXT_REPORT_SECTION_KEYS = ['summary', 'renderer', 'raf', 'backend', 'samples'];
+  const DEFAULT_TEXT_REPORT_SECTIONS = Object.freeze(
+    Object.fromEntries(TEXT_REPORT_SECTION_KEYS.map((key) => [key, true])),
+  );
+
   const RENDERER_METRICS = [
     { key: 'coldViewToRuntimeRenderMs', label: 'Cold publish → runtime render', desc: 'React scheduling before the runtime boundary starts rendering' },
     { key: 'runtimeRenderToLayoutMs', label: 'Runtime render → layout commit', desc: 'Runtime boundary render, descendants, and DOM commit' },
     { key: 'runtimeLayoutToAdapterSyncMs', label: 'Runtime layout → adapter sync', desc: 'Wait from layout commit until the passive adapter effect starts' },
     { key: 'runtimeAdapterOperationMs', label: 'Runtime adapter operation', desc: 'Adapter repository update and synchronous subscriber notification' },
     { key: 'adapterSyncToThreadRenderMs', label: 'Adapter sync start → thread render', desc: 'Delay from pre-notification sync boundary to the committed Thread render' },
+    { key: 'adapterSyncToThreadLayoutMs', label: 'Adapter synced → selected Thread layout', desc: 'Wall-clock span from adapter completion to the selected post-adapter Thread layout' },
     { key: 'threadRenderBodyMs', label: 'Thread list render body', desc: 'Synchronous work owned by the ThreadMessageList function' },
     { key: 'threadAfterBodyToInsertionMs', label: 'Thread descendants → insertion', desc: 'Descendant reconciliation and scheduler time after the list function returns' },
     { key: 'threadInsertionToLayoutMs', label: 'Thread insertion → layout', desc: 'Commit-phase work between insertion and layout effects' },
     { key: 'threadRenderToLayoutMs', label: 'Thread render → layout commit', desc: 'Visible thread subtree render and DOM commit' },
     { key: 'userMessageRenderBodyMs', label: 'User message render body', desc: 'Synchronous work owned by the visible UserMessage function' },
-    { key: 'assistantMessageRenderBodyMs', label: 'Assistant message render body', desc: 'Synchronous work owned by the visible AssistantMessage function' },
-    { key: 'assistantMessageAfterBodyToInsertionMs', label: 'Assistant descendants → insertion', desc: 'Assistant parts, Markdown reconciliation, and scheduling after its function returns' },
-    { key: 'assistantMessageInsertionToLayoutMs', label: 'Assistant insertion → layout', desc: 'Assistant subtree commit work before its layout effect' },
-    { key: 'assistantMessageRenderToLayoutMs', label: 'Assistant render → layout', desc: 'Total visible AssistantMessage subtree render and commit span' },
+    { key: 'assistantMessageRenderBodyMs', label: 'Matched Assistant shell render body', desc: 'AssistantMessage owning the selected dominant Markdown message' },
+    { key: 'assistantMessageAfterBodyToInsertionMs', label: 'Matched Assistant descendants → insertion', desc: 'Matched assistant shell reconciliation and scheduling after its function returns' },
+    { key: 'assistantMessageInsertionToLayoutMs', label: 'Matched Assistant insertion → layout', desc: 'Matched assistant shell commit work before its layout effect' },
+    { key: 'assistantMessageRenderToLayoutMs', label: 'Matched Assistant render → layout', desc: 'Matched assistant shell render and commit span; it may be a different commit from deferred Markdown' },
+    { key: 'assistantLayoutToMarkdownLayoutMs', label: 'Assistant layout → later Markdown layout', desc: 'Deferred gap when the selected Markdown commits after its matched Assistant shell' },
+    { key: 'adapterSyncToMarkdownLayoutMs', label: 'Adapter synced → dominant Markdown layout', desc: 'Wall-clock span from adapter completion to the selected slowest Markdown layout' },
+    { key: 'threadLayoutToMarkdownLayoutMs', label: 'Thread layout → later Markdown layout', desc: 'Deferred gap when dominant Markdown commits after the selected Thread shell' },
+    { key: 'assistantMarkdownRenderBodyMs', label: 'Dominant Markdown render body', desc: 'Synchronous setup owned by the selected slowest MarkdownTextSurface' },
+    { key: 'assistantMarkdownAfterBodyToInsertionMs', label: 'Dominant Markdown descendants → insertion', desc: 'Selected Streamdown reconciliation and scheduling after MarkdownTextSurface returns' },
+    { key: 'assistantMarkdownInsertionToLayoutMs', label: 'Dominant Markdown insertion → layout', desc: 'Selected Markdown subtree DOM commit work before its layout effect' },
+    { key: 'assistantMarkdownRenderToLayoutMs', label: 'Dominant Markdown render → layout', desc: 'Selected slowest Markdown part render and commit span' },
+  ];
+
+  const FRAME_METRICS = [
+    { key: 'paintWaitDur', label: 'Paint-wait start → selected Thread layout', desc: 'Time to the selected post-adapter Thread layout, not a browser paint measurement' },
+    { key: 'markdownLayoutToRaf1Ms', label: 'Dominant Markdown layout → RAF1', desc: 'Scheduler/frame gap after the selected Markdown layout' },
+    { key: 'raf1ToRaf2Ms', label: 'RAF1 → RAF2', desc: 'Gap between the two requestAnimationFrame callbacks' },
+    { key: 'raf2WaitMs', label: 'Double-RAF completion wait', desc: 'Total wait through RAF2; this is not a direct pixel-paint timestamp' },
+    { key: 'resumeRespAt', label: 'Response sent at', desc: 'Absolute trace time of the backend response-sent marker' },
+    { key: 'raf1At', label: 'RAF1 at', desc: 'Absolute trace time of the first requestAnimationFrame callback' },
+    { key: 'raf2At', label: 'RAF2 at', desc: 'Absolute trace time of the second requestAnimationFrame callback' },
   ];
 
   const GROUPS = [
@@ -33,7 +56,7 @@
       icon: 'timer',
       label: 'Top-level',
       metrics: [
-        { key: 'elapsedMs', label: 'elapsedMs', desc: 'Total time to final paint' },
+        { key: 'elapsedMs', label: 'elapsedMs', desc: 'Total time through the second requestAnimationFrame marker' },
       ],
     },
     {
@@ -72,14 +95,8 @@
     },
     {
       icon: 'brush',
-      label: 'Paint pipeline',
-      metrics: [
-        { key: 'paintWaitDur', label: 'paint-wait → layout-commit · Δ', desc: 'Double-RAF wait before layout' },
-        { key: 'raf2WaitMs', label: 'paint-raf-2 · waitDurationMs', desc: 'Total double-RAF wait reported' },
-        { key: 'resumeRespAt', label: 'resume-response-sent · atMs', desc: 'Backend response sent (new format)' },
-        { key: 'raf1At', label: 'paint-raf-1 · atMs', desc: 'First RAF fired' },
-        { key: 'raf2At', label: 'paint-raf-2 · atMs', desc: 'Second RAF (≈ elapsedMs)' },
-      ],
+      label: 'Frame / RAF scheduling',
+      metrics: FRAME_METRICS,
     },
   ];
 
@@ -127,6 +144,9 @@
         { key: 'jsonSerializeMs', traceKey: 'backendJsonSerializeMs', label: 'JSON serialize', desc: 'Backend JSON serialize' },
         { key: 'wsReceiveToAckMs', traceKey: 'backendWsReceiveToAckMs', label: 'WS receive → ACK', desc: 'Backend work after receive_text returned' },
         { key: 'wsAckSendMs', traceKey: 'backendWsAckSendMs', label: 'WS ACK send', desc: 'ACK flush and send on backend' },
+        { key: 'wsPreviousDispatchMs', traceKey: 'backendWsPreviousDispatchMs', label: 'Previous WS dispatch', desc: 'Time the previous request occupied this connection receive loop' },
+        { key: 'wsPreviousRequestMs', traceKey: 'backendWsPreviousRequestMs', label: 'Previous WS request', desc: 'Total receive-loop occupancy of the previous request, including response send' },
+        { key: 'wsEventLoopLagMs', traceKey: 'backendWsEventLoopLagMs', label: 'Backend event-loop lag', desc: 'Maximum backend loop timer drift before resume receive' },
         { key: 'responseSendMs', traceKey: 'backendResponseSendMs', label: 'Response send', desc: 'Backend response send_text duration' },
         { key: 'responseSendTotalMs', traceKey: 'backendSendTotalMs', label: 'Response send total', desc: 'Buffered prefix plus response send' },
       ],
@@ -139,6 +159,8 @@
       fields: [
         { key: 'clientReqAckMs', traceKey: 'clientRequestReceiveAckMs', label: 'Client → ACK', desc: 'Time until client received RPC ack' },
         { key: 'clientReqAckTransportMs', traceKey: 'clientRequestReceiveAckTransportMs', label: 'Client → ACK excl. queue', desc: 'Composite send, backend pre-ACK, and IPC wait; not pure wire transport' },
+        { key: 'clientReqAckRendererLagMs', traceKey: 'clientRequestReceiveAckRendererLagMs', label: 'Renderer lag during ACK wait', desc: 'Maximum renderer timer drift while waiting for ACK' },
+        { key: 'clientReqAckUnattributedMs', traceKey: 'clientRequestReceiveAckUnattributedMs', label: 'ACK wait residual', desc: 'Residual after sampled renderer and queue lag; the 50 ms renderer probe cannot decompose shorter waits precisely' },
         { key: 'clientAckEventQueueMs', traceKey: 'clientReceiveAckEventQueueMs', label: 'ACK event queue', desc: 'Renderer queue before ACK callback' },
         { key: 'clientAckToRespMs', traceKey: 'clientReceiveAckToResponseMs', label: 'ACK → response', desc: 'Time from ACK to full response received' },
         { key: 'clientMessageQueueMs', traceKey: 'clientMessageEventQueueMs', label: 'Response event queue', desc: 'Renderer queue before response callback' },
@@ -163,6 +185,7 @@
       description: 'Payload characteristics that help explain timings but are not latency.',
       distribution: 'spread',
       fields: [
+        { key: 'wsPreviousRequestFinishedAgoMs', traceKey: 'backendWsPreviousRequestFinishedAgoMs', label: 'Previous request idle age', desc: 'Idle context before resume arrived, not latency caused by resume', kind: 'context' },
         { key: 'clientRespChars', traceKey: 'clientResponseChars', label: 'Response size', desc: 'Serialized response length', unit: 'chars', kind: 'context' },
       ],
     },
@@ -180,7 +203,7 @@
     { label: 'Runtime layout → adapter sync', key: 'runtimeLayoutToAdapterSyncMs' },
     { label: 'Adapter sync → thread render', key: 'adapterSyncToThreadRenderMs' },
     { label: 'Thread render → layout', key: 'threadRenderToLayoutMs' },
-    { label: 'Paint wait', key: 'raf2WaitMs' },
+    { label: 'Double-RAF completion wait', key: 'raf2WaitMs' },
     { label: 'Backend handler', subKey: 'handlerMs' },
     { label: 'DB open', subKey: 'dbOpenMs' },
     { label: 'Live lookup', subKey: 'liveLookupMs' },
@@ -274,10 +297,31 @@
     }).filter((row) => Number.isFinite(row.valueA) || Number.isFinite(row.valueB));
   }
 
+  function buildComparisonSummary(comparisonRows) {
+    const totalElapsed = comparisonRows.find((row) => row.key === 'elapsedMs');
+    const delta = totalElapsed?.delta ?? NaN;
+    const outcome = !Number.isFinite(delta)
+      ? { key: 'unavailable', label: 'No comparable total' }
+      : Math.abs(delta) < 0.05
+        ? { key: 'neutral', label: 'No material change' }
+        : delta < 0
+          ? { key: 'faster', label: 'B faster' }
+          : { key: 'slower', label: 'B slower' };
+
+    return {
+      valueA: totalElapsed?.valueA ?? NaN,
+      valueB: totalElapsed?.valueB ?? NaN,
+      delta,
+      percent: totalElapsed?.percent ?? NaN,
+      ...outcome,
+    };
+  }
+
   function buildComparisonTextReport(setA, setB, comparisonRows, rowsA, rowsB) {
     const oneLine = (value) => String(value).replace(/\s+/g, ' ').trim();
     const contextA = buildBackendContextLabels(rowsA).join(', ') || 'no backend timing';
     const contextB = buildBackendContextLabels(rowsB).join(', ') || 'no backend timing';
+    const summary = buildComparisonSummary(comparisonRows);
     const lines = [
       'HERMES MEASUREMENT SET COMPARISON',
       `A: ${oneLine(setA.name)} | samples: ${setA.traces.length}`,
@@ -285,6 +329,7 @@
       `B: ${oneLine(setB.name)} | samples: ${setB.traces.length}`,
       `B backend: ${contextB}`,
       'delta: B - A | negative means B is faster',
+      `OVERALL p50 total elapsed: A ${fmt(summary.valueA)} ms | B ${fmt(summary.valueB)} ms | delta ${formatSigned(summary.delta, ' ms')} | change ${formatSigned(summary.percent, '%')} | ${summary.label}`,
     ];
 
     [
@@ -317,7 +362,13 @@
     return `${label.padEnd(31)} p50 ${fmt(statsForField.med).padStart(8)}${suffix}  p90 ${fmt(statsForField.p90).padStart(8)}${suffix}  p95 ${fmt(statsForField.p95).padStart(8)}${suffix}  min ${fmt(statsForField.min).padStart(8)}  max ${fmt(statsForField.max).padStart(8)}`;
   }
 
-  function buildTextReport(rows) {
+  function compactId(value) {
+    if (typeof value !== 'string' || !value) return '-';
+    return value.length > 20 ? `...${value.slice(-17)}` : value;
+  }
+
+  function buildTextReport(rows, sectionOptions = DEFAULT_TEXT_REPORT_SECTIONS) {
+    const sections = { ...DEFAULT_TEXT_REPORT_SECTIONS, ...sectionOptions };
     const timingVersions = [...new Set(rows.map((row) => row.backend.timingVersion).filter(Number.isFinite))]
       .sort((a, b) => a - b)
       .map((version) => `v${version}`)
@@ -329,61 +380,127 @@
     ).length;
     const rendererSelectorVersions = [...new Set(rows.map((row) => row._rendererSelectionVersion).filter(Number.isFinite))];
     const rendererSelector = rendererSelectorVersions.length === 1
-      ? `post-adapter-v${rendererSelectorVersions[0]}`
+      ? `linked-markdown-v${rendererSelectorVersions[0]}`
       : rendererSelectorVersions.length > 1 ? 'mixed' : 'legacy';
-    const lines = [
-      'HERMES COLD-RESUME PERFORMANCE REPORT',
-      `samples: ${rows.length} | timing: ${timingVersions} | active-build samples: ${activeBuildSamples}/${rows.length}`,
-      `backend context: ${backendContexts}`,
-      `analyzer: renderer-breakdown-v5 | selector: ${rendererSelector} | renderer-field samples: ${rendererSamples}/${rows.length}`,
-      '',
-      'SUMMARY',
-      reportStat('Total elapsed', computeStats(rows, 'elapsedMs')),
-      reportStat('Resume RPC', computeStats(rows, 'rpcDurationMs')),
-      reportStat('Cold view published at', computeStats(rows, 'coldViewAt')),
-      reportStat('Paint wait', computeStats(rows, 'raf2WaitMs')),
-    ].filter((line) => line !== null);
+    const lines = ['HERMES COLD-RESUME PERFORMANCE REPORT'];
+
+    lines.push(sections.backend
+      ? `samples: ${rows.length} | timing: ${timingVersions} | active-build samples: ${activeBuildSamples}/${rows.length}`
+      : `samples: ${rows.length}`);
+
+    if (sections.backend) {
+      lines.push(`backend context: ${backendContexts}`);
+    }
+
+    if (sections.renderer) {
+      lines.push(`analyzer: renderer-breakdown-v10 | selector: ${rendererSelector} | renderer-field samples: ${rendererSamples}/${rows.length}`);
+    }
+
+    if (sections.summary || sections.renderer || sections.raf) {
+      lines.push('note: aggregate percentiles are independent distributions and are not an additive critical path');
+    }
+
+    if (sections.summary) {
+      lines.push(
+        '',
+        'SUMMARY',
+        reportStat('Total elapsed', computeStats(rows, 'elapsedMs')),
+        reportStat('Resume RPC', computeStats(rows, 'rpcDurationMs')),
+        reportStat('Cold view published at', computeStats(rows, 'coldViewAt')),
+        reportStat('Double-RAF completion wait', computeStats(rows, 'raf2WaitMs')),
+      );
+    }
 
     const rendererLines = RENDERER_METRICS
       .map((metric) => reportStat(metric.label, computeStats(rows, metric.key)))
       .filter(Boolean);
 
-    lines.push('', 'RENDERER SCHEDULING');
-    lines.push(...(rendererLines.length > 0 ? rendererLines : ['Renderer fields unavailable in supplied traces']));
+    if (sections.renderer) {
+      lines.push('', 'RENDERER SCHEDULING');
+      lines.push(...(rendererLines.length > 0 ? rendererLines : ['Renderer fields unavailable in supplied traces']));
+    }
 
-    lines.push('', 'BACKEND / TRANSPORT');
+    const frameLines = FRAME_METRICS
+      .map((metric) => reportStat(metric.label, computeStats(rows, metric.key)))
+      .filter(Boolean);
 
-    BACKEND_FIELDS.forEach((field) => {
-      const line = reportStat(field.label, computeStats(rows, null, field.key), field.unit);
-      if (line) lines.push(line);
-    });
+    if (sections.raf) {
+      lines.push('', 'FRAME / RAF SCHEDULING');
+      lines.push(...(frameLines.length > 0 ? frameLines : ['RAF fields unavailable in supplied traces']));
+    }
 
-    lines.push('', 'SAMPLES');
-    rows.forEach((row, index) => {
-      const backend = row.backend;
-      lines.push([
-        `#${String(index + 1).padStart(2, '0')}`,
-        `elapsed=${fmt(row.elapsedMs)}`,
-        `rpc=${fmt(row.rpcDurationMs)}`,
-        `reqAck=${fmt(backend.clientReqAckMs)}`,
-        `ackResp=${fmt(backend.clientAckToRespMs)}`,
-        `handler=${fmt(backend.handlerMs)}`,
-        `paint=${fmt(row.raf2WaitMs)}`,
-        `messages=${row.messageCount ?? '?'}`,
-        `builds=${fmt(backend.agentBuildActiveCount, 0)}`,
-        `timing=v${Number.isFinite(backend.timingVersion) ? fmt(backend.timingVersion, 0) : '?'}`,
-        `prewarm=${formatPrewarmMode(backend)}`,
-      ].join(' | '));
-    });
+    if (sections.backend) {
+      lines.push('', 'BACKEND / TRANSPORT');
+
+      BACKEND_FIELDS.forEach((field) => {
+        const line = reportStat(field.label, computeStats(rows, null, field.key), field.unit);
+        if (line) lines.push(line);
+      });
+    }
+
+    if (sections.samples) {
+      lines.push('', 'SAMPLES');
+      rows.forEach((row, index) => {
+        const backend = row.backend;
+        const fields = [
+          `#${String(index + 1).padStart(2, '0')}`,
+          `elapsed=${fmt(row.elapsedMs)}`,
+          `rpc=${fmt(row.rpcDurationMs)}`,
+          `messages=${row.messageCount ?? '?'}`,
+        ];
+
+        if (sections.backend) {
+          fields.push(
+            `reqAck=${fmt(backend.clientReqAckMs)}`,
+            `rendererLag=${fmt(backend.clientReqAckRendererLagMs)}`,
+            `unattr=${fmt(backend.clientReqAckUnattributedMs)}`,
+            `prev=${backend.wsPreviousMethod ?? '-'}`,
+            `prevMs=${fmt(backend.wsPreviousDispatchMs)}`,
+            `prevReqMs=${fmt(backend.wsPreviousRequestMs)}`,
+            `loopLag=${fmt(backend.wsEventLoopLagMs)}`,
+            `ackResp=${fmt(backend.clientAckToRespMs)}`,
+            `handler=${fmt(backend.handlerMs)}`,
+            `builds=${fmt(backend.agentBuildActiveCount, 0)}`,
+            `timing=v${Number.isFinite(backend.timingVersion) ? fmt(backend.timingVersion, 0) : '?'}`,
+            `prewarm=${formatPrewarmMode(backend)}`,
+          );
+        }
+
+        if (sections.renderer) {
+          fields.push(
+            `threadAt=${fmt(row.threadSelectedAtMs)}`,
+            `assistantAt=${fmt(row.assistantMessageSelectedAtMs)}`,
+            `markdownAt=${fmt(row.assistantMarkdownSelectedAtMs)}`,
+            `markdownMsg=${compactId(row.assistantMarkdownMessageId)}`,
+            `assistantMatched=${row.assistantMessageMatchedToMarkdown ? 'yes' : 'no'}`,
+            `markdownCandidates=${fmt(row.assistantMarkdownCandidateCount, 0)}`,
+            `adapterMarkdown=${fmt(row.adapterSyncToMarkdownLayoutMs)}`,
+          );
+        }
+
+        if (sections.raf) {
+          fields.push(
+            `raf2Wait=${fmt(row.raf2WaitMs)}`,
+            `markdownRaf1=${fmt(row.markdownLayoutToRaf1Ms)}`,
+            `raf1Raf2=${fmt(row.raf1ToRaf2Ms)}`,
+          );
+        }
+
+        lines.push(fields.join(' | '));
+      });
+    }
 
     return lines.join('\n');
   }
 
   const reportModule = {
+    DEFAULT_TEXT_REPORT_SECTIONS,
     GROUPS,
+    TEXT_REPORT_SECTION_KEYS,
     buildBackendContextLabels,
     buildBackendGroups,
     buildComparisonRows,
+    buildComparisonSummary,
     buildComparisonTextReport,
     buildTextReport,
   };

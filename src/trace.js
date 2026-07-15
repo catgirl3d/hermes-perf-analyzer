@@ -13,6 +13,22 @@
     return stages.filter((stage) => stage.name === name);
   }
 
+  function durationBetween(fromAtMs, toAtMs) {
+    return Number.isFinite(fromAtMs) && Number.isFinite(toAtMs) && toAtMs >= fromAtMs
+      ? toAtMs - fromAtMs
+      : NaN;
+  }
+
+  function nearestStageForMessage(stages, messageId, targetAtMs) {
+    if (typeof messageId !== 'string' || !messageId) return {};
+    return stages
+      .filter((stage) => stage.messageId === messageId)
+      .reduce((nearest, stage) => {
+        if (!Number.isFinite(nearest.atMs)) return stage;
+        return Math.abs(stage.atMs - targetAtMs) < Math.abs(nearest.atMs - targetAtMs) ? stage : nearest;
+      }, {});
+  }
+
   function detectFormat(trace) {
     const stages = trace.stages || [];
     const rpcStartIndex = stages.findIndex((stage) => stage.name === 'resume-rpc-start');
@@ -56,6 +72,9 @@
     const postRuntimeLayout = stagesAll(postRpcStages, 'runtime-boundary-layout-commit')[0] || {};
     const postAdapterStart = stagesAll(postRpcStages, 'runtime-adapter-sync-started')[0] || {};
     const postAdapter = stagesAll(postRpcStages, 'runtime-adapter-synced')[0] || {};
+    const postAdapterCutoffAt = Number.isFinite(postAdapter.atMs)
+      ? postAdapter.atMs
+      : Number.isFinite(postAdapterStart.atMs) ? postAdapterStart.atMs : 0;
     const transcriptStage = stageFirst(postRpcStages, 'transcript-transformed') || {};
     const coldViewAt = (stageFirst(stages, 'cold-view-published') || {}).atMs;
     const paintWaitAt = (stageFirst(stages, 'paint-wait-start') || {}).atMs;
@@ -69,11 +88,29 @@
     );
     const postThreadLayout = threadLayoutAfterAdapter[0] || threadLayoutAfterPaint[0] || {};
     const postUserMessage = stages.find(
-      (stage) => stage.name === 'user-message-layout-commit' && stage.atMs > (postAdapterStart.atMs || 0),
+      (stage) => stage.name === 'user-message-layout-commit' && stage.atMs > postAdapterCutoffAt,
     ) || {};
-    const postAssistantMessage = stages.find(
-      (stage) => stage.name === 'assistant-message-layout-commit' && stage.atMs > (postAdapterStart.atMs || 0),
-    ) || {};
+    const assistantMessageCandidates = stages.filter(
+      (stage) => stage.name === 'assistant-message-layout-commit' && stage.atMs > postAdapterCutoffAt,
+    );
+    const assistantMarkdownCandidates = stages.filter(
+      (stage) => stage.name === 'assistant-markdown-layout-commit' && stage.atMs > postAdapterCutoffAt,
+    );
+    const postAssistantMarkdown = assistantMarkdownCandidates
+      .reduce(
+        (slowest, stage) =>
+          !Number.isFinite(slowest.renderToLayoutCommitMs) || stage.renderToLayoutCommitMs > slowest.renderToLayoutCommitMs
+            ? stage
+            : slowest,
+        {},
+      );
+    const postAssistantMessage = Number.isFinite(postAssistantMarkdown.atMs)
+      ? nearestStageForMessage(
+        assistantMessageCandidates,
+        postAssistantMarkdown.messageId,
+        postAssistantMarkdown.atMs,
+      )
+      : assistantMessageCandidates[0] || {};
     const paintWaitDur = Number.isFinite(postThreadLayout.atMs) && !isNaN(paintWaitAt)
       ? postThreadLayout.atMs - paintWaitAt
       : NaN;
@@ -99,12 +136,19 @@
       handlerToWriteMs: readBackend('backendHandlerToWriteMs'),
       wsReceiveToAckMs: readBackend('backendWsReceiveToAckMs'),
       wsAckSendMs: readBackend('backendWsAckSendMs'),
+      wsEventLoopLagMs: readBackend('backendWsEventLoopLagMs'),
+      wsPreviousDispatchMs: readBackend('backendWsPreviousDispatchMs'),
+      wsPreviousMethod: rpcFinished.backendWsPreviousMethod ?? null,
+      wsPreviousRequestFinishedAgoMs: readBackend('backendWsPreviousRequestFinishedAgoMs'),
+      wsPreviousRequestMs: readBackend('backendWsPreviousRequestMs'),
       agentBuildActiveCount: readBackend('backendAgentBuildActiveCount'),
       agentBuildActiveMaxMs: readBackend('backendAgentBuildActiveMaxElapsedMs'),
       agentBuildLastDurMs: readBackend('backendAgentBuildLastDurationMs'),
       agentBuildLastAgoMs: readBackend('backendAgentBuildLastFinishedAgoMs'),
       clientReqAckMs: readBackend('clientRequestReceiveAckMs'),
+      clientReqAckRendererLagMs: readBackend('clientRequestReceiveAckRendererLagMs'),
       clientReqAckTransportMs: readBackend('clientRequestReceiveAckTransportMs'),
+      clientReqAckUnattributedMs: readBackend('clientRequestReceiveAckUnattributedMs'),
       clientAckEventQueueMs: readBackend('clientReceiveAckEventQueueMs'),
       clientAckToRespMs: readBackend('clientReceiveAckToResponseMs'),
       clientMessageQueueMs: readBackend('clientMessageEventQueueMs'),
@@ -122,7 +166,7 @@
     return {
       _format: format,
       _hasBackend: !isNaN(backend.handlerMs),
-      _rendererSelectionVersion: 5,
+      _rendererSelectionVersion: 8,
       elapsedMs,
       profileAt,
       rpcStartAt,
@@ -138,8 +182,20 @@
       runtimeAdapterOperationMs: postAdapter.operationDurationMs,
       postAdapterStartAt: postAdapterStart.atMs,
       postAdapterAt: postAdapter.atMs,
+      threadSelectedAtMs: postThreadLayout.atMs,
+      assistantMessageSelectedAtMs: postAssistantMessage.atMs,
+      assistantMarkdownSelectedAtMs: postAssistantMarkdown.atMs,
+      assistantMessageId: postAssistantMessage.messageId ?? null,
+      assistantMarkdownMessageId: postAssistantMarkdown.messageId ?? null,
+      assistantMarkdownCandidateCount: assistantMarkdownCandidates.length,
+      assistantMessageMatchedToMarkdown:
+        Number.isFinite(postAssistantMarkdown.atMs)
+        && typeof postAssistantMarkdown.messageId === 'string'
+        && postAssistantMarkdown.messageId.length > 0
+        && postAssistantMessage.messageId === postAssistantMarkdown.messageId,
       adapterSyncToThreadRenderMs:
         postThreadLayout.runtimeSyncStartToRenderStartMs ?? postThreadLayout.runtimeSyncToRenderStartMs,
+      adapterSyncToThreadLayoutMs: durationBetween(postAdapter.atMs, postThreadLayout.atMs),
       threadRenderBodyMs: postThreadLayout.renderBodyDurationMs,
       threadAfterBodyToInsertionMs:
         Number.isFinite(postThreadLayout.renderToInsertionCommitMs) && Number.isFinite(postThreadLayout.renderBodyDurationMs)
@@ -155,6 +211,16 @@
           : NaN,
       assistantMessageInsertionToLayoutMs: postAssistantMessage.insertionCommitToLayoutMs,
       assistantMessageRenderToLayoutMs: postAssistantMessage.renderToLayoutCommitMs,
+      assistantLayoutToMarkdownLayoutMs: durationBetween(postAssistantMessage.atMs, postAssistantMarkdown.atMs),
+      adapterSyncToMarkdownLayoutMs: durationBetween(postAdapter.atMs, postAssistantMarkdown.atMs),
+      threadLayoutToMarkdownLayoutMs: durationBetween(postThreadLayout.atMs, postAssistantMarkdown.atMs),
+      assistantMarkdownRenderBodyMs: postAssistantMarkdown.renderBodyDurationMs,
+      assistantMarkdownAfterBodyToInsertionMs:
+        Number.isFinite(postAssistantMarkdown.renderToInsertionCommitMs) && Number.isFinite(postAssistantMarkdown.renderBodyDurationMs)
+          ? Math.max(0, postAssistantMarkdown.renderToInsertionCommitMs - postAssistantMarkdown.renderBodyDurationMs)
+          : NaN,
+      assistantMarkdownInsertionToLayoutMs: postAssistantMarkdown.insertionCommitToLayoutMs,
+      assistantMarkdownRenderToLayoutMs: postAssistantMarkdown.renderToLayoutCommitMs,
       transcriptMs: transcriptStage.sincePreviousStageMs,
       coldViewAt,
       paintWaitAt,
@@ -162,6 +228,8 @@
       resumeRespAt: resumeResponseSent.atMs,
       raf1At: raf1.atMs,
       raf2At: raf2.atMs,
+      markdownLayoutToRaf1Ms: durationBetween(postAssistantMarkdown.atMs, raf1.atMs),
+      raf1ToRaf2Ms: durationBetween(raf1.atMs, raf2.atMs),
       raf2WaitMs: raf2.waitDurationMs,
       messageCount: rpcFinished.messageCount ?? trace.messageCount,
       backend,
