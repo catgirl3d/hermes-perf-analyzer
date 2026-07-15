@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Hermes Perf Analyzer</title>
-<link rel="stylesheet" href="./perf-analyzer.css?v=renderer-breakdown-v3" />
+<link rel="stylesheet" href="./perf-analyzer.css?v=renderer-breakdown-v4" />
 </head>
 <body>
 
@@ -198,10 +198,17 @@
           <h3>Resume RPC diagnostics</h3>
           <p class="breakdown-kicker">Latency, transport, runtime state, and response context</p>
         </div>
-        <span class="backend-source">source · resume-rpc-finished</span>
+        <div class="breakdown-controls">
+          <div class="backend-filters" id="backendImpactFilters" aria-label="Backend diagnostic filter">
+            <button class="backend-filter is-active" type="button" data-backend-impact-filter="all" aria-pressed="true">All metrics</button>
+            <button class="backend-filter" type="button" data-backend-impact-filter="significant" aria-pressed="false">Significant tails</button>
+          </div>
+          <span class="backend-source">source · resume-rpc-finished</span>
+        </div>
       </div>
       <p class="breakdown-note"><strong>How to read:</strong> every card aggregates all parsed samples. Timing groups use tail = p90 − p50; snapshot and context groups use spread because they are not RPC spans. The line marks p50 and the dot marks p90. Groups are diagnostic, not additive. Below 10 samples, treat p90 as low confidence.</p>
       <div class="backend-context" id="backendContext"></div>
+      <p class="backend-filter-empty" id="backendFilterEmpty" hidden>No significant p90 tails in these samples.</p>
       <div class="backend-groups" id="backendGrid"></div>
     </div>
 
@@ -251,12 +258,12 @@
   </section>
 </div>
 
-<script src="./samples/example-traces.js?v=renderer-breakdown-v3" defer></script>
-<script src="./src/trace.js?v=renderer-breakdown-v3" defer></script>
-<script src="./src/stats.js?v=renderer-breakdown-v3" defer></script>
-<script src="./src/report.js?v=renderer-breakdown-v3" defer></script>
-<script src="./src/measurement-sets.js?v=renderer-breakdown-v3" defer></script>
-<script src="./src/ui.js?v=renderer-breakdown-v3" defer></script>
-<script src="./src/app.js?v=renderer-breakdown-v3" defer></script>
+<script src="./samples/example-traces.js?v=renderer-breakdown-v4" defer></script>
+<script src="./src/trace.js?v=renderer-breakdown-v4" defer></script>
+<script src="./src/stats.js?v=renderer-breakdown-v4" defer></script>
+<script src="./src/report.js?v=renderer-breakdown-v4" defer></script>
+<script src="./src/measurement-sets.js?v=renderer-breakdown-v4" defer></script>
+<script src="./src/ui.js?v=renderer-breakdown-v4" defer></script>
+<script src="./src/app.js?v=renderer-breakdown-v4" defer></script>
 </body>
 </html>
